@@ -250,7 +250,7 @@ jobs:
 
       # Upload everything as a workflow artifact for later release
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACKAGE_NAME }}-${{ matrix.channel }}-${{ steps.sdk.outputs.version_label }}-${{ env.OPENWRT_TARGET }}-${{ env.OPENWRT_SUBTARGET }}
           path: dist/*
@@ -274,7 +274,7 @@ jobs:
       # Need the repository to determine latest tag in manual dispatch
       - name: Checkout
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # Fetch all history to get tags
           fetch-tags: true
@@ -295,7 +295,7 @@ jobs:
 
       # Download all artifacts produced by the build matrix
       - name: Download package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
 
@@ -323,7 +323,7 @@ jobs:
 
       # Publish or update the release with all package files and SHA256SUMS
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag_name }}
           files: |
