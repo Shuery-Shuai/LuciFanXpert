@@ -30,8 +30,8 @@ env:
   PACKAGE_NAME: luci-app-fanxpert
   OPENWRT_VERSION: ${{ github.event.inputs.openwrt_version || '25.12.4' }}
   LEGACY_OPENWRT_VERSION: ${{ github.event.inputs.legacy_openwrt_version || '24.10.7' }}
-  OPENWRT_TARGET: ${{ github.event.inputs.openwrt_target || 'armsr' }}
-  OPENWRT_SUBTARGET: ${{ github.event.inputs.openwrt_subtarget || 'armv8' }}
+  OPENWRT_TARGET: ${{ github.event.inputs.openwrt_target || 'mediatek' }}
+  OPENWRT_SUBTARGET: ${{ github.event.inputs.openwrt_subtarget || 'filogic' }}
 
 jobs:
   build:
@@ -88,7 +88,8 @@ jobs:
             version_label="${OPENWRT_VERSION}"
           fi
 
-          sdk_name="$(wget -qO- "${base_url}/sha256sums" | awk '/openwrt-sdk-.*Linux-x86_64\.tar\.(xz|zst)$/ { print $2; exit }')"
+          sdk_name="$(wget -qO- "${base_url}/sha256sums" \
+            | awk '/openwrt-sdk-.*Linux-x86_64\.tar\.(xz|zst)$/ { gsub(/^\*/, "", $2); print $2; exit }')"
 
           if [ -z "${sdk_name}" ]; then
             echo "Unable to find SDK in ${base_url}/sha256sums" >&2
@@ -107,7 +108,7 @@ jobs:
 
           wget -q "${{ steps.sdk.outputs.sdk_url }}"
           wget -q "${{ steps.sdk.outputs.base_url }}/sha256sums"
-          grep " ${{ steps.sdk.outputs.sdk_name }}$" sha256sums | sha256sum -c -
+          grep "${{ steps.sdk.outputs.sdk_name }}" sha256sums | sha256sum -c -
 
       - name: Extract SDK
         id: extract
