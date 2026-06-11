@@ -89,7 +89,7 @@ jobs:
     steps:
       # Check out the repository containing the package source
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Install host build dependencies required by the SDK
       - name: Install build dependencies
