@@ -1,0 +1,17 @@
+{
+	"luci-app-fanxpert": {
+		"description": "Grant access to FanXpert LuCI app",
+		"read": {
+			"uci": [ "fanxpert" ],
+			"ubus": {
+				"fanxpert": [ "status", "curve_data", "calibrate_progress" ]
+			}
+		},
+		"write": {
+			"uci": [ "fanxpert" ],
+			"ubus": {
+				"fanxpert": [ "calibrate", "reload", "start", "stop", "restart" ]
+			}
+		}
+	}
+}

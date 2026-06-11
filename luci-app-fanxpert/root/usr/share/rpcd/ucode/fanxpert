@@ -1,0 +1,106 @@
+#!/usr/bin/env ucode
+
+'use strict';
+
+let fs = require('fs');
+
+const FANXPERT = '/usr/sbin/fanxpert.sh';
+const INIT = '/etc/init.d/fanxpert';
+const FAN_ID_RE = /^[A-Za-z0-9_]+$/;
+
+function shquote(s) {
+	return "'" + replace(s ?? '', "'", "'\\''") + "'";
+}
+
+function run(cmd) {
+	let fp = fs.popen(cmd + ' 2>&1', 'r');
+	let out = fp ? fp.read('all') : '';
+	let rc = fp ? fp.close() : 127;
+	return { code: rc, output: out ?? '' };
+}
+
+function request_args(req) {
+	return req?.args ?? req ?? {};
+}
+
+function valid_fan_id(fan) {
+	return !!fan && !!match(fan, FAN_ID_RE);
+}
+
+function parse_json_output(result) {
+	let text = trim(result.output ?? '');
+
+	if (!text)
+		return { ok: false, code: result.code, error: 'Empty response' };
+
+	try {
+		let parsed = json(text);
+		if (type(parsed) == 'object') {
+			parsed.ok = result.code === 0 && !parsed.error;
+			parsed.code = result.code;
+			return parsed;
+		}
+		return { ok: result.code === 0, code: result.code, data: parsed };
+	}
+	catch (e) {
+		return { ok: false, code: result.code, error: 'Invalid JSON response', raw: text };
+	}
+}
+
+function service_action(action) {
+	let allowed = { start: true, stop: true, restart: true, reload: true };
+	if (!allowed[action])
+		return { ok: false, error: 'Invalid service action' };
+
+	let r = run(INIT + ' ' + action);
+	return { ok: r.code === 0, code: r.code, output: r.output };
+}
+
+function status() {
+	let service = run(FANXPERT + ' status');
+	let state = parse_json_output(run(FANXPERT + ' info'));
+
+	return {
+		ok: service.code === 0,
+		running: service.code === 0 && index(service.output, 'running') >= 0,
+		service: service.output,
+		state: state
+	};
+}
+
+function curve_data(req) {
+	req = request_args(req);
+	let fan = req.fan || 'cpu_fan';
+
+	if (!valid_fan_id(fan))
+		return { ok: false, error: 'Invalid fan id' };
+
+	return parse_json_output(run(FANXPERT + ' curve-data ' + shquote(fan)));
+}
+
+function calibrate(req) {
+	req = request_args(req);
+	let fan = req.fan || 'cpu_fan';
+
+	if (!valid_fan_id(fan))
+		return { ok: false, error: 'Invalid fan id' };
+
+	return parse_json_output(run(FANXPERT + ' calibrate ' + shquote(fan)));
+}
+
+function calibrate_progress() {
+	return parse_json_output(run(FANXPERT + ' calibrate-progress'));
+}
+
+return {
+	fanxpert: {
+		status: { call: function(req) { return status(); } },
+		curve_data: { args: { fan: '' }, call: curve_data },
+		calibrate: { args: { fan: '' }, call: calibrate },
+		calibrate_progress: { call: function(req) { return calibrate_progress(); } },
+		reload: { call: function(req) { return service_action('reload'); } },
+		start: { call: function(req) { return service_action('start'); } },
+		stop: { call: function(req) { return service_action('stop'); } },
+		restart: { call: function(req) { return service_action('restart'); } }
+	}
+};

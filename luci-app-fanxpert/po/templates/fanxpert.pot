@@ -1,0 +1,211 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-fanxpert\n"
+"PO-Revision-Date: 2026-06-05 00:00+0000\n"
+"Last-Translator: FanXpert Team\n"
+"Language-Team: FanXpert Team\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "FanXpert"
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+msgid "Advanced fan speed control based on temperature sensors"
+msgstr ""
+
+msgid "Global Settings"
+msgstr ""
+
+msgid "Enable FanXpert"
+msgstr ""
+
+msgid "Log Level"
+msgstr ""
+
+msgid "Error"
+msgstr ""
+
+msgid "Warning"
+msgstr ""
+
+msgid "Notice"
+msgstr ""
+
+msgid "Info"
+msgstr ""
+
+msgid "Debug"
+msgstr ""
+
+msgid "Fan Devices"
+msgstr ""
+
+msgid "Basic"
+msgstr ""
+
+msgid "Hardware"
+msgstr ""
+
+msgid "Enabled"
+msgstr ""
+
+msgid "Label"
+msgstr ""
+
+msgid "Fan Curve"
+msgstr ""
+
+msgid "Current Status"
+msgstr ""
+
+msgid "Control Mode"
+msgstr ""
+
+msgid "Silent"
+msgstr ""
+
+msgid "Standard"
+msgstr ""
+
+msgid "Performance"
+msgstr ""
+
+msgid "Custom"
+msgstr ""
+
+msgid "Preset Curves"
+msgstr ""
+
+msgid "Curve"
+msgstr ""
+
+msgid "Min Temp (°C)"
+msgstr ""
+
+msgid "Max Temp (°C)"
+msgstr ""
+
+msgid "Start Speed (%)"
+msgstr ""
+
+msgid "Max Speed (%)"
+msgstr ""
+
+msgid "Reset to Default"
+msgstr ""
+
+msgid "Reset"
+msgstr ""
+
+msgid "Custom Curve"
+msgstr ""
+
+msgid "Custom Curves"
+msgstr ""
+
+msgid "Add Custom Curve"
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Sensor"
+msgstr ""
+
+msgid "CPU Temperature"
+msgstr ""
+
+msgid "Advanced Settings"
+msgstr ""
+
+msgid "Fan Start Threshold (%)"
+msgstr ""
+
+msgid "Minimum PWM percentage to start the fan (0-100%)"
+msgstr ""
+
+msgid "Auto Calibration"
+msgstr ""
+
+msgid "Never Stop"
+msgstr ""
+
+msgid "Keep fan running at minimum speed instead of stopping"
+msgstr ""
+
+msgid "PWM Controller"
+msgstr ""
+
+msgid "Auto Detect"
+msgstr ""
+
+msgid "Leave as 'auto' for automatic detection"
+msgstr ""
+
+msgid "Leave as auto for automatic detection"
+msgstr ""
+
+msgid "Sensor Path"
+msgstr ""
+
+msgid "Temperature"
+msgstr ""
+
+msgid "Fan Speed"
+msgstr ""
+
+msgid "Curve Mode"
+msgstr ""
+
+msgid "Uptime"
+msgstr ""
+
+msgid "Refresh Status"
+msgstr ""
+
+msgid "Start Service"
+msgstr ""
+
+msgid "Stop Service"
+msgstr ""
+
+msgid "Restart Service"
+msgstr ""
+
+msgid "Service not running"
+msgstr ""
+
+msgid "Loading..."
+msgstr ""
+
+msgid "Start Calibration"
+msgstr ""
+
+msgid "Stop service before calibration"
+msgstr ""
+
+msgid "Calibration started"
+msgstr ""
+
+msgid "Calibrating..."
+msgstr ""
+
+msgid "Failed to start"
+msgstr ""
+
+msgid "Calibration not running"
+msgstr ""
+
+msgid "Calibration complete"
+msgstr ""
+
+msgid "Start threshold"
+msgstr ""
+
+msgid "Calibration failed"
+msgstr ""

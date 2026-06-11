@@ -1,0 +1,212 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-fanxpert\n"
+"PO-Revision-Date: 2026-06-05 00:00+0000\n"
+"Last-Translator: FanXpert Team\n"
+"Language-Team: Chinese Simplified\n"
+"Language: zh_Hans\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "FanXpert"
+msgstr "风扇指控"
+
+msgid "Configuration"
+msgstr "配置"
+
+msgid "Advanced fan speed control based on temperature sensors"
+msgstr "基于温度传感器的高级风扇转速控制"
+
+msgid "Global Settings"
+msgstr "全局设置"
+
+msgid "Enable FanXpert"
+msgstr "启用 FanXpert"
+
+msgid "Log Level"
+msgstr "日志级别"
+
+msgid "Error"
+msgstr "错误"
+
+msgid "Warning"
+msgstr "警告"
+
+msgid "Notice"
+msgstr "通知"
+
+msgid "Info"
+msgstr "信息"
+
+msgid "Debug"
+msgstr "调试"
+
+msgid "Fan Devices"
+msgstr "风扇设备"
+
+msgid "Basic"
+msgstr "基础"
+
+msgid "Hardware"
+msgstr "硬件"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "Label"
+msgstr "标签"
+
+msgid "Fan Curve"
+msgstr "风扇曲线"
+
+msgid "Current Status"
+msgstr "当前状态"
+
+msgid "Control Mode"
+msgstr "控制模式"
+
+msgid "Silent"
+msgstr "静音"
+
+msgid "Standard"
+msgstr "标准"
+
+msgid "Performance"
+msgstr "高性能"
+
+msgid "Custom"
+msgstr "自定义"
+
+msgid "Preset Curves"
+msgstr "预设曲线"
+
+msgid "Curve"
+msgstr "曲线"
+
+msgid "Min Temp (°C)"
+msgstr "最低温度 (°C)"
+
+msgid "Max Temp (°C)"
+msgstr "最高温度 (°C)"
+
+msgid "Start Speed (%)"
+msgstr "起始转速 (%)"
+
+msgid "Max Speed (%)"
+msgstr "最高转速 (%)"
+
+msgid "Reset to Default"
+msgstr "恢复默认"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "Custom Curve"
+msgstr "自定义曲线"
+
+msgid "Custom Curves"
+msgstr "自定义曲线"
+
+msgid "Add Custom Curve"
+msgstr "添加自定义曲线"
+
+msgid "Name"
+msgstr "名称"
+
+msgid "Sensor"
+msgstr "传感器"
+
+msgid "CPU Temperature"
+msgstr "CPU 温度"
+
+msgid "Advanced Settings"
+msgstr "高级设置"
+
+msgid "Fan Start Threshold (%)"
+msgstr "风扇启动阈值 (%)"
+
+msgid "Minimum PWM percentage to start the fan (0-100%)"
+msgstr "启动风扇所需的最低 PWM 百分比 (0-100%)"
+
+msgid "Auto Calibration"
+msgstr "自动校准"
+
+msgid "Never Stop"
+msgstr "永不停转"
+
+msgid "Keep fan running at minimum speed instead of stopping"
+msgstr "保持风扇以最低转速运行，而不是停止"
+
+msgid "PWM Controller"
+msgstr "PWM 控制器"
+
+msgid "Auto Detect"
+msgstr "自动检测"
+
+msgid "Leave as 'auto' for automatic detection"
+msgstr "保持为“自动”以自动检测"
+
+msgid "Leave as auto for automatic detection"
+msgstr "保持为自动以自动检测"
+
+msgid "Sensor Path"
+msgstr "传感器路径"
+
+msgid "Temperature"
+msgstr "温度"
+
+msgid "Fan Speed"
+msgstr "风扇转速"
+
+msgid "Curve Mode"
+msgstr "曲线模式"
+
+msgid "Uptime"
+msgstr "运行时间"
+
+msgid "Refresh Status"
+msgstr "刷新状态"
+
+msgid "Start Service"
+msgstr "启动服务"
+
+msgid "Stop Service"
+msgstr "停止服务"
+
+msgid "Restart Service"
+msgstr "重启服务"
+
+msgid "Service not running"
+msgstr "服务未运行"
+
+msgid "Loading..."
+msgstr "加载中..."
+
+msgid "Start Calibration"
+msgstr "开始校准"
+
+msgid "Stop service before calibration"
+msgstr "校准前请先停止服务"
+
+msgid "Calibration started"
+msgstr "校准已启动"
+
+msgid "Calibrating..."
+msgstr "校准中..."
+
+msgid "Failed to start"
+msgstr "启动失败"
+
+msgid "Calibration not running"
+msgstr "校准未运行"
+
+msgid "Calibration complete"
+msgstr "校准完成"
+
+msgid "Start threshold"
+msgstr "启动阈值"
+
+msgid "Calibration failed"
+msgstr "校准失败"

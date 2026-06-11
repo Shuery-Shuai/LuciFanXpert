@@ -1,0 +1,13 @@
+{
+	"admin/system/fanxpert": {
+		"title": "FanXpert",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "fanxpert"
+		},
+		"depends": {
+			"acl": [ "luci-app-fanxpert" ]
+		}
+	}
+}

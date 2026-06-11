@@ -1,0 +1,48 @@
+# Build outputs
+bin/
+build_dir/
+staging_dir/
+tmp/
+*.ipk
+*.tar.gz
+*.tar.xz
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OpenWrt SDK artifacts
+dl/
+feeds/
+package/feeds/
+.config
+.config.old
+
+# Logs
+*.log
+
+# Temporary files
+/tmp/
+*.tmp
+*.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node.js (if used for tooling)
+node_modules/
+npm-debug.log*
+
+# Backup files
+*.orig
+*.rej
+
+# Test outputs
+test-results/
+coverage/
