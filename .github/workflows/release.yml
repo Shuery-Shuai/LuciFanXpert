@@ -1,3 +1,32 @@
+# ---------------------------------------------------------------------------
+# Workflow: Build and Release
+#
+# Description:
+#   Automatically builds LuCI application packages for OpenWrt using the
+#   official SDKs. It produces both modern APK packages (for OpenWrt >= 25.x)
+#   and legacy IPK packages (for OpenWrt 24.10.x). When a version tag is
+#   pushed, the built packages are published as a GitHub Release.
+#
+# Triggers:
+#   - workflow_dispatch:
+#       Manual run with optional overrides for OpenWrt version, target,
+#       subtarget, and legacy version.
+#   - push on tags matching "v*":
+#       Automatically triggers a build and release using the default
+#       parameters.
+#
+# Permissions:
+#   contents: write
+#       Required to create releases and upload asset files.
+#
+# Environment Variables (defaults):
+#   PACKAGE_NAME           = luci-app-fanxpert
+#   OPENWRT_VERSION        = 25.12.4
+#   LEGACY_OPENWRT_VERSION = 24.10.7
+#   OPENWRT_TARGET         = mediatek
+#   OPENWRT_SUBTARGET      = filogic
+# ---------------------------------------------------------------------------
+
 name: Build and Release
 
 on:
@@ -26,6 +55,7 @@ on:
 permissions:
   contents: write
 
+# Global environment variables – fallback to defaults when triggered by tag push
 env:
   PACKAGE_NAME: luci-app-fanxpert
   OPENWRT_VERSION: ${{ github.event.inputs.openwrt_version || '25.12.4' }}
@@ -34,11 +64,16 @@ env:
   OPENWRT_SUBTARGET: ${{ github.event.inputs.openwrt_subtarget || 'filogic' }}
 
 jobs:
+  # -------------------------------------------------------------------------
+  # Job: build
+  #   Compiles the package for both APK and IPK formats using the
+  #   corresponding OpenWrt SDK.
+  # -------------------------------------------------------------------------
   build:
     name: Build ${{ matrix.channel }} package
     runs-on: ubuntu-24.04
     strategy:
-      fail-fast: false
+      fail-fast: false # Allow both channels to run even if one fails
       matrix:
         include:
           - channel: release-apk
@@ -47,9 +82,11 @@ jobs:
             package_glob: "*.ipk"
 
     steps:
+      # Check out the repository containing the package source
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Install host build dependencies required by the SDK
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -74,12 +111,14 @@ jobs:
             file \
             zstd
 
+      # Dynamically determine the SDK download URL based on version and target
       - name: Resolve SDK URL
         id: sdk
         shell: bash
         run: |
           set -euo pipefail
 
+          # Choose the correct release depending on the channel
           if [ "${{ matrix.channel }}" = "legacy-ipk" ]; then
             base_url="https://downloads.openwrt.org/releases/${LEGACY_OPENWRT_VERSION}/targets/${OPENWRT_TARGET}/${OPENWRT_SUBTARGET}"
             version_label="${LEGACY_OPENWRT_VERSION}"
@@ -88,6 +127,7 @@ jobs:
             version_label="${OPENWRT_VERSION}"
           fi
 
+          # Extract the SDK filename from sha256sums, stripping any leading '*'
           sdk_name="$(wget -qO- "${base_url}/sha256sums" \
             | awk '/openwrt-sdk-.*Linux-x86_64\.tar\.(xz|zst)$/ { gsub(/^\*/, "", $2); print $2; exit }')"
 
@@ -101,6 +141,7 @@ jobs:
           echo "sdk_name=${sdk_name}" >> "$GITHUB_OUTPUT"
           echo "sdk_url=${base_url}/${sdk_name}" >> "$GITHUB_OUTPUT"
 
+      # Download and verify SDK integrity using the published checksum
       - name: Download and verify OpenWrt SDK
         shell: bash
         run: |
@@ -109,6 +150,7 @@ jobs:
           wget -q "${{ steps.sdk.outputs.base_url }}/sha256sums"
           grep "${{ steps.sdk.outputs.sdk_name }}" sha256sums | sha256sum -c -
 
+      # Unpack the SDK archive (supports .tar.xz and .tar.zst)
       - name: Extract SDK
         id: extract
         shell: bash
@@ -134,6 +176,7 @@ jobs:
           fi
           echo "sdk_dir=${sdk_dir}" >> "$GITHUB_OUTPUT"
 
+      # Copy the package source into the SDK's package feed
       - name: Install package into SDK
         shell: bash
         run: |
@@ -146,12 +189,14 @@ jobs:
             "${PACKAGE_NAME}/" \
             "${sdk_dir}/package/${PACKAGE_NAME}/"
 
+      # Update package feeds and install all available packages
       - name: Update feeds
         working-directory: ${{ steps.extract.outputs.sdk_dir }}
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      # Configure the build system to compile our package as a module
       - name: Configure package
         working-directory: ${{ steps.extract.outputs.sdk_dir }}
         run: |
@@ -159,10 +204,12 @@ jobs:
           echo "CONFIG_PACKAGE_${PACKAGE_NAME}=m" >> .config
           make defconfig
 
+      # Compile the package (and its language packs) with verbose output
       - name: Build package
         working-directory: ${{ steps.extract.outputs.sdk_dir }}
         run: make package/${PACKAGE_NAME}/compile V=s -j"$(nproc)"
 
+      # Gather the built .apk/.ipk files (including i18n translations)
       - name: Collect artifacts
         id: artifacts
         shell: bash
@@ -173,14 +220,18 @@ jobs:
           out_dir="$PWD/dist"
           mkdir -p "${out_dir}"
 
+          # Extract the short package name (e.g., fanxpert) for i18n files
           shortname="${PACKAGE_NAME#luci-app-}"
 
+          # Collect main packages – IPK uses underscore, APK uses hyphen
           find "${sdk_dir}/bin/packages" -type f -name "${PACKAGE_NAME}_*.ipk" -exec cp -v {} "${out_dir}/" \;
           find "${sdk_dir}/bin/packages" -type f -name "${PACKAGE_NAME}-*.apk" -exec cp -v {} "${out_dir}/" \;
 
+          # Collect language packs (e.g., luci-i18n-fanxpert-zh-cn)
           find "${sdk_dir}/bin/packages" -type f -name "luci-i18n-${shortname}_*.ipk" -exec cp -v {} "${out_dir}/" \;
           find "${sdk_dir}/bin/packages" -type f -name "luci-i18n-${shortname}-*.apk" -exec cp -v {} "${out_dir}/" \;
 
+          # Verify the required package format exists for the current channel
           if ! ls "${out_dir}"/${{ matrix.package_glob }} >/dev/null 2>&1; then
             echo "No ${{ matrix.package_glob }} package found for ${{ matrix.channel }} build" >&2
             echo "Available files:" >&2
@@ -188,9 +239,11 @@ jobs:
             exit 1
           fi
 
+          # Generate checksums for all collected packages
           (cd "${out_dir}" && sha256sum *.*pk > SHA256SUMS)
           echo "dist=${out_dir}" >> "$GITHUB_OUTPUT"
 
+      # Upload everything as a workflow artifact for later release
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -198,6 +251,11 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # -------------------------------------------------------------------------
+  # Job: release
+  #   Runs only on tag pushes. Downloads artifacts from the build job,
+  #   combines them, and creates a GitHub Release with the packages.
+  # -------------------------------------------------------------------------
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
@@ -205,11 +263,13 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # Download all artifacts produced by the build matrix
       - name: Download package artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-assets
 
+      # Prepare a unified directory with both IPK and APK files
       - name: Prepare release assets
         shell: bash
         run: |
@@ -218,18 +278,20 @@ jobs:
           mkdir -p dist
           find release-assets -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp -v {} dist/ \;
 
+          # Ensure both formats are present before creating a release
           if ! ls dist/${PACKAGE_NAME}_*.ipk >/dev/null 2>&1; then
             echo "Missing legacy .ipk package" >&2
             exit 1
           fi
-
           if ! ls dist/${PACKAGE_NAME}-*.apk >/dev/null 2>&1; then
             echo "Missing release .apk package" >&2
             exit 1
           fi
 
+          # Regenerate checksums over the combined set
           (cd dist && sha256sum *.*pk > SHA256SUMS)
 
+      # Publish the release with all package files and SHA256SUMS
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
