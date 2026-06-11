@@ -105,7 +105,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           wget -q "${{ steps.sdk.outputs.sdk_url }}"
           wget -q "${{ steps.sdk.outputs.base_url }}/sha256sums"
           grep "${{ steps.sdk.outputs.sdk_name }}" sha256sums | sha256sum -c -
@@ -115,7 +114,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           case "${{ steps.sdk.outputs.sdk_name }}" in
             *.tar.xz)
               tar -xf "${{ steps.sdk.outputs.sdk_name }}"
@@ -134,21 +132,19 @@ jobs:
             echo "Unable to locate extracted SDK directory" >&2
             exit 1
           fi
-
           echo "sdk_dir=${sdk_dir}" >> "$GITHUB_OUTPUT"
 
       - name: Install package into SDK
         shell: bash
         run: |
           set -euo pipefail
-
           sdk_dir="${{ steps.extract.outputs.sdk_dir }}"
-          mkdir -p "${sdk_dir}/package/luci-app-fanxpert"
+          mkdir -p "${sdk_dir}/package/${PACKAGE_NAME}"
           rsync -a --delete \
             --exclude '.git' \
             --exclude '.github' \
-            luci-app-fanxpert/ \
-            "${sdk_dir}/package/luci-app-fanxpert/"
+            "${PACKAGE_NAME}/" \
+            "${sdk_dir}/package/${PACKAGE_NAME}/"
 
       - name: Update feeds
         working-directory: ${{ steps.extract.outputs.sdk_dir }}
@@ -160,12 +156,12 @@ jobs:
         working-directory: ${{ steps.extract.outputs.sdk_dir }}
         run: |
           make defconfig
-          echo "CONFIG_PACKAGE_luci-app-fanxpert=m" >> .config
+          echo "CONFIG_PACKAGE_${PACKAGE_NAME}=m" >> .config
           make defconfig
 
       - name: Build package
         working-directory: ${{ steps.extract.outputs.sdk_dir }}
-        run: make package/luci-app-fanxpert/compile V=s -j"$(nproc)"
+        run: make package/${PACKAGE_NAME}/compile V=s -j"$(nproc)"
 
       - name: Collect artifacts
         id: artifacts
@@ -177,18 +173,18 @@ jobs:
           out_dir="$PWD/dist"
           mkdir -p "${out_dir}"
 
-          find "${sdk_dir}/bin/packages" -type f -name 'luci-app-fanxpert_*.ipk' -exec cp -v {} "${out_dir}/" \;
-          find "${sdk_dir}/bin/packages" -type f -name 'luci-app-fanxpert_*.apk' -exec cp -v {} "${out_dir}/" \;
+          shortname="${PACKAGE_NAME#luci-app-}"
+
+          find "${sdk_dir}/bin/packages" -type f -name "${PACKAGE_NAME}_*.ipk" -exec cp -v {} "${out_dir}/" \;
+          find "${sdk_dir}/bin/packages" -type f -name "${PACKAGE_NAME}-*.apk" -exec cp -v {} "${out_dir}/" \;
+
+          find "${sdk_dir}/bin/packages" -type f -name "luci-i18n-${shortname}_*.ipk" -exec cp -v {} "${out_dir}/" \;
+          find "${sdk_dir}/bin/packages" -type f -name "luci-i18n-${shortname}-*.apk" -exec cp -v {} "${out_dir}/" \;
 
           if ! ls "${out_dir}"/${{ matrix.package_glob }} >/dev/null 2>&1; then
             echo "No ${{ matrix.package_glob }} package found for ${{ matrix.channel }} build" >&2
             echo "Available files:" >&2
             find "${out_dir}" -type f -maxdepth 1 -print >&2
-            exit 1
-          fi
-
-          if ! ls "${out_dir}"/luci-app-fanxpert_*.*pk >/dev/null 2>&1; then
-            echo "No luci-app-fanxpert package found" >&2
             exit 1
           fi
 
@@ -198,7 +194,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: luci-app-fanxpert-${{ matrix.channel }}-${{ steps.sdk.outputs.version_label }}-${{ env.OPENWRT_TARGET }}-${{ env.OPENWRT_SUBTARGET }}
+          name: ${{ env.PACKAGE_NAME }}-${{ matrix.channel }}-${{ steps.sdk.outputs.version_label }}-${{ env.OPENWRT_TARGET }}-${{ env.OPENWRT_SUBTARGET }}
           path: dist/*
           if-no-files-found: error
 
@@ -222,12 +218,12 @@ jobs:
           mkdir -p dist
           find release-assets -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp -v {} dist/ \;
 
-          if ! ls dist/luci-app-fanxpert_*.ipk >/dev/null 2>&1; then
+          if ! ls dist/${PACKAGE_NAME}_*.ipk >/dev/null 2>&1; then
             echo "Missing legacy .ipk package" >&2
             exit 1
           fi
 
-          if ! ls dist/luci-app-fanxpert_*.apk >/dev/null 2>&1; then
+          if ! ls dist/${PACKAGE_NAME}-*.apk >/dev/null 2>&1; then
             echo "Missing release .apk package" >&2
             exit 1
           fi
