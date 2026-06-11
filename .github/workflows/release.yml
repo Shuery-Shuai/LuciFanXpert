@@ -32,10 +32,6 @@ name: Build and Release
 on:
   workflow_dispatch:
     inputs:
-      openwrt_version:
-        description: OpenWrt release version
-        required: true
-        default: "25.12.4"
       openwrt_target:
         description: OpenWrt target
         required: true
@@ -44,6 +40,10 @@ on:
         description: OpenWrt subtarget
         required: true
         default: "64"
+      openwrt_version:
+        description: OpenWrt release version
+        required: true
+        default: "25.12.4"
       legacy_openwrt_version:
         description: Legacy OpenWrt release version for IPK builds
         required: true
