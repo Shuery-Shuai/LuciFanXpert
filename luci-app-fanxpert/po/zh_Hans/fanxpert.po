@@ -11,7 +11,7 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 
 msgid "FanXpert"
-msgstr "风扇指控"
+msgstr "风扇智控"
 
 msgid "Configuration"
 msgstr "配置"
