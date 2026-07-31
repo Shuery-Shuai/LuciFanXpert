@@ -46,6 +46,9 @@ msgstr "调试"
 msgid "Fan Devices"
 msgstr "风扇设备"
 
+msgid "Fan"
+msgstr "风扇"
+
 msgid "Basic"
 msgstr "基础"
 
@@ -184,6 +187,9 @@ msgstr "服务未运行"
 msgid "Loading..."
 msgstr "加载中..."
 
+msgid "No RPM sensor detected, value is estimated. Please verify manually."
+msgstr "未检测到转速传感器，数值为估算值，请手动确认。"
+
 msgid "Start Calibration"
 msgstr "开始校准"
 
@@ -228,6 +234,24 @@ msgstr "校准时间"
 
 msgid "Config reload failed: "
 msgstr "配置重载失败："
+
+msgid "unknown error"
+msgstr "未知错误"
+
+msgid ", please check system logs"
+msgstr "，请检查系统日志"
+
+msgid "Calibration complete: start threshold %s%% (PWM: %s) [Measured]"
+msgstr "校准完成：启动阈值 %s%%（PWM：%s）[实测]"
+
+msgid "Calibration complete: start threshold %s%% (PWM: %s) [Estimated]"
+msgstr "校准完成：启动阈值 %s%%（PWM：%s）[估算]"
+
+msgid "Calibration failed: fan not spinning (RPM sensor no response)"
+msgstr "校准失败：风扇未转动（转速传感器无响应）"
+
+msgid "Please check fan connection or set threshold manually."
+msgstr "请检查风扇连接或手动设置阈值。"
 
 msgid "Verified with RPM feedback"
 msgstr "已验证转速反馈"
