@@ -45,6 +45,9 @@ msgstr ""
 msgid "Fan Devices"
 msgstr ""
 
+msgid "Fan"
+msgstr ""
+
 msgid "Basic"
 msgstr ""
 
@@ -183,6 +186,9 @@ msgstr ""
 msgid "Loading..."
 msgstr ""
 
+msgid "No RPM sensor detected, value is estimated. Please verify manually."
+msgstr ""
+
 msgid "Start Calibration"
 msgstr ""
 
@@ -228,28 +234,22 @@ msgstr ""
 msgid "Config reload failed: "
 msgstr ""
 
-msgid "Verified with RPM feedback"
+msgid "unknown error"
 msgstr ""
 
-msgid "Stable RPM: "
+msgid ", please check system logs"
 msgstr ""
 
-msgid "Measured (verified)"
+msgid "Calibration complete: start threshold %s%% (PWM: %s) [Measured]"
 msgstr ""
 
-msgid "Estimated (no RPM sensor)"
+msgid "Calibration complete: start threshold %s%% (PWM: %s) [Estimated]"
 msgstr ""
 
-msgid "Unknown / Manual"
+msgid "Calibration failed: fan not spinning (RPM sensor no response)"
 msgstr ""
 
-msgid "Calibration Source"
-msgstr ""
-
-msgid "Calibration Time"
-msgstr ""
-
-msgid "Config reload failed: "
+msgid "Please check fan connection or set threshold manually."
 msgstr ""
 
 msgid "Verified with RPM feedback"
