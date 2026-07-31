@@ -79,6 +79,11 @@ validate_config() {
         exit 1
     }
 
+    if [ "${DEPLOY_FORCE:-0}" != "1" ]; then
+        warn "This deployment will overwrite files on the target device. Re-run with DEPLOY_FORCE=1 to continue."
+        die "Refusing to deploy without explicit confirmation"
+    fi
+
     case "$OPENWRT_HOST" in
         *" "*|*"	"*) die "OPENWRT_HOST must not contain whitespace" ;;
     esac
