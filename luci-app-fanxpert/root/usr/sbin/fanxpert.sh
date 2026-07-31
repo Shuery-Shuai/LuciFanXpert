@@ -13,6 +13,14 @@ STATE_FILE="/tmp/fanxpert.state"
 PID_FILE="/tmp/run/fanxpert.pid"
 RELOAD_FLAG="/tmp/fanxpert.reload_requested"
 
+# 重载状态跟踪（用于写入 state 文件）
+LAST_RELOAD_TIME=0
+LAST_RELOAD_STATUS="unknown"
+LAST_RELOAD_ERROR=""
+
+# 校准进度文件
+CALIBRATE_PROGRESS_FILE="/tmp/fanxpert.calibrate.progress"
+
 # PWM 控制范围
 PWM_MIN=0
 PWM_MAX=255
@@ -64,6 +72,41 @@ is_valid_id() {
     esac
 }
 
+# 读取风扇转速（RPM）
+# 参数: pwm_path (如 /sys/class/hwmon/hwmon0/pwm1)
+# 返回: RPM 数值（整数），若无转速传感器或读取失败则输出空字符串
+read_fan_rpm() {
+    local pwm_path="$1"
+    local fan_path
+    # 将 /sys/class/hwmon/hwmonN/pwmX → /sys/class/hwmon/hwmonN/fanX_input
+    fan_path="${pwm_path%pwm*}fan${pwm_path##*pwm}_input"
+    if [ -r "$fan_path" ]; then
+        local rpm
+        rpm=$(cat "$fan_path" 2>/dev/null | tr -d ' ')
+        if [ -n "$rpm" ] && [ "$rpm" -eq "$rpm" ] 2>/dev/null; then
+            echo "$rpm"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# 写入重载状态到内存（下次写 state 文件时持久化）
+write_reload_status() {
+    local status="$1"   # success / failed
+    local error="${2:-}"
+    LAST_RELOAD_TIME=$(date +%s)
+    LAST_RELOAD_STATUS="$status"
+    LAST_RELOAD_ERROR="$error"
+}
+
+# 重置重载状态（在每次重载尝试之前调用）
+reset_reload_status() {
+    LAST_RELOAD_TIME=0
+    LAST_RELOAD_STATUS="unknown"
+    LAST_RELOAD_ERROR=""
+}
+
 json_escape() {
     printf '%s' "$1" | sed \
         -e 's/\\/\\\\/g' \
@@ -80,6 +123,103 @@ load_uci_config() {
     LOG_LEVEL=$(uci -q get fanxpert.settings.log_level) || LOG_LEVEL="info"
 
     log_msg debug "开始加载 UCI 配置"
+}
+
+# ============================================================
+# UCI CONFIGURATION SELF-HEALING
+# ============================================================
+
+# 确保 UCI 配置存在且结构完整（在守护进程启动时调用）
+ensure_uci_config() {
+    local need_commit=0
+
+    # 1. 检查全局 settings section
+    if ! uci -q get fanxpert.settings >/dev/null 2>&1; then
+        log_msg notice "UCI 配置缺失，正在创建默认配置..."
+        uci -q batch <<'EOF'
+set fanxpert.settings='global'
+set fanxpert.settings.enabled='0'
+set fanxpert.settings.log_level='info'
+
+set fanxpert.silent='curve'
+set fanxpert.silent.type='bezier'
+set fanxpert.silent.sensor='cpu_temp'
+set fanxpert.silent.temp_min='40'
+set fanxpert.silent.temp_max='70'
+set fanxpert.silent.pwm_start='20'
+set fanxpert.silent.pwm_end='70'
+
+set fanxpert.standard='curve'
+set fanxpert.standard.type='bezier'
+set fanxpert.standard.sensor='cpu_temp'
+set fanxpert.standard.temp_min='35'
+set fanxpert.standard.temp_max='75'
+set fanxpert.standard.pwm_start='30'
+set fanxpert.standard.pwm_end='100'
+
+set fanxpert.performance='curve'
+set fanxpert.performance.type='bezier'
+set fanxpert.performance.sensor='cpu_temp'
+set fanxpert.performance.temp_min='30'
+set fanxpert.performance.temp_max='65'
+set fanxpert.performance.pwm_start='40'
+set fanxpert.performance.pwm_end='100'
+
+set fanxpert.cpu_temp='sensor'
+set fanxpert.cpu_temp.type='hwmon'
+set fanxpert.cpu_temp.platform='auto'
+set fanxpert.cpu_temp.label='CPU Temperature'
+
+set fanxpert.cpu_fan='fan'
+set fanxpert.cpu_fan.enabled='1'
+set fanxpert.cpu_fan.label='CPU Fan'
+set fanxpert.cpu_fan.curve='standard'
+set fanxpert.cpu_fan.pwm_path='auto'
+set fanxpert.cpu_fan.pwm_min_start='0'
+set fanxpert.cpu_fan.pwm_min_start_source='unknown'
+set fanxpert.cpu_fan.pwm_min_start_timestamp='0'
+set fanxpert.cpu_fan.never_stop='1'
+
+set fanxpert.custom_cpu_fan='curve'
+set fanxpert.custom_cpu_fan.label='Custom CPU Fan'
+set fanxpert.custom_cpu_fan.type='bezier'
+set fanxpert.custom_cpu_fan.sensor='cpu_temp'
+set fanxpert.custom_cpu_fan.temp_min='35'
+set fanxpert.custom_cpu_fan.temp_max='75'
+set fanxpert.custom_cpu_fan.pwm_start='30'
+set fanxpert.custom_cpu_fan.pwm_end='100'
+EOF
+        need_commit=1
+        log_msg notice "默认 UCI 配置已创建"
+    fi
+
+    # 2. 遍历所有 type='fan' 的 section，补齐缺失字段
+    local fan_sections
+    fan_sections=$(uci -q show fanxpert | grep -E '^fanxpert\.[^=]+=fan$' | cut -d. -f2 | cut -d= -f1)
+    for section in $fan_sections; do
+        local field_updated=0
+
+        if ! uci -q get "fanxpert.${section}.pwm_min_start_source" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.pwm_min_start_source=unknown"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.pwm_min_start_timestamp" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.pwm_min_start_timestamp=0"
+            field_updated=1
+        fi
+
+        if [ "$field_updated" -eq 1 ]; then
+            log_msg debug "补齐风扇 section ${section} 的元数据字段"
+            need_commit=1
+        fi
+    done
+
+    # 3. 如果配置被创建或修改，提交 UCI
+    if [ "$need_commit" -eq 1 ]; then
+        uci commit fanxpert
+        log_msg notice "UCI 配置已更新"
+    fi
 }
 
 load_sensor_config() {
@@ -211,7 +351,9 @@ reset_curve_to_default() {
 find_temp_sensor() {
     local found_temp=0
     local temp_path=""
+    local matched_name=""
 
+    # 第一轮：优先匹配常见 CPU/热区关键词
     for hwmon in /sys/class/hwmon/hwmon*; do
         [ -d "$hwmon" ] || continue
 
@@ -219,67 +361,100 @@ find_temp_sensor() {
             local name
             name=$(cat "$hwmon/name")
             case "$name" in
-                *cpu* | *thermal* | *coretemp* | *k10temp*)
+                *cpu*|*thermal*|*coretemp*|*k10temp*|*acpitz*|*pch*|*corsair*)
                     temp_path="$hwmon/temp1"
                     found_temp=1
-                    log_msg debug "找到温度传感器: $temp_path (name: $name)"
+                    matched_name="$name"
+                    log_msg debug "找到温度传感器: $temp_path (name: $name, 优先级匹配)"
                     break
                     ;;
             esac
         fi
     done
 
-    # 如果没找到带名称的设备，使用任何可用的
+    # 第二轮：若未匹配到关键词，使用第一个可用的 temp1_input
     if [ "$found_temp" -eq 0 ]; then
         for hwmon in /sys/class/hwmon/hwmon*; do
             [ -d "$hwmon" ] || continue
             if [ -r "$hwmon/temp1_input" ]; then
                 temp_path="$hwmon/temp1"
                 found_temp=1
-                log_msg debug "找到备用温度传感器: $temp_path"
+                local name
+                name=$(cat "$hwmon/name" 2>/dev/null || echo "unknown")
+                log_msg debug "找到备用温度传感器: $temp_path (name: $name)"
                 break
             fi
         done
     fi
 
-    [ "$found_temp" -eq 1 ] && echo "$temp_path" || return 1
+    if [ "$found_temp" -eq 1 ]; then
+        echo "$temp_path"
+        return 0
+    fi
+    return 1
 }
 
 find_pwm_controller() {
     local found_pwm=0
     local pwm_path=""
+    local matched_name=""
 
+    # 第一轮：优先查找存在 pwm1_enable 且可写的设备
     for hwmon in /sys/class/hwmon/hwmon*; do
         [ -d "$hwmon" ] || continue
 
-        if [ -w "$hwmon/pwm1" ] && [ -r "$hwmon/name" ]; then
+        if [ -w "$hwmon/pwm1_enable" ] && [ -w "$hwmon/pwm1" ]; then
+            pwm_path="$hwmon/pwm1"
+            found_pwm=1
             local name
-            name=$(cat "$hwmon/name")
-            case "$name" in
-                *pwm* | *fan*)
-                    pwm_path="$hwmon/pwm1"
-                    found_pwm=1
-                    log_msg debug "找到风扇控制器: $pwm_path (name: $name)"
-                    break
-                    ;;
-            esac
+            name=$(cat "$hwmon/name" 2>/dev/null || echo "unknown")
+            log_msg debug "找到优先 PWM 控制器: $pwm_path (name: $name, 有 pwm_enable)"
+            break
         fi
     done
 
-    # 如果没找到带名称的设备，使用任何可用的
+    # 第二轮：若未找到带 enable 的，匹配关键词列表
     if [ "$found_pwm" -eq 0 ]; then
         for hwmon in /sys/class/hwmon/hwmon*; do
             [ -d "$hwmon" ] || continue
+
+            if [ -w "$hwmon/pwm1" ] && [ -r "$hwmon/name" ]; then
+                local name
+                name=$(cat "$hwmon/name")
+                case "$name" in
+                    *pwm*|*fan*|*nct*|*it87*|*w837*|*w836*|*f718*|*nuvoton*)
+                        pwm_path="$hwmon/pwm1"
+                        found_pwm=1
+                        matched_name="$name"
+                        log_msg debug "找到 PWM 控制器: $pwm_path (name: $name, 关键词匹配)"
+                        break
+                        ;;
+                esac
+            fi
+        done
+    fi
+
+    # 第三轮：回退到第一个可用的 pwm1
+    if [ "$found_pwm" -eq 0 ]; then
+        for hwmon in /sys/class/hwmon/hwmon*; do
+            [ -d "$hwmon" ] || continue
+
             if [ -w "$hwmon/pwm1" ]; then
                 pwm_path="$hwmon/pwm1"
                 found_pwm=1
-                log_msg debug "找到备用风扇控制器: $pwm_path"
+                local name
+                name=$(cat "$hwmon/name" 2>/dev/null || echo "unknown")
+                log_msg debug "找到备用 PWM 控制器: $pwm_path (name: $name)"
                 break
             fi
         done
     fi
 
-    [ "$found_pwm" -eq 1 ] && echo "$pwm_path" || return 1
+    if [ "$found_pwm" -eq 1 ]; then
+        echo "$pwm_path"
+        return 0
+    fi
+    return 1
 }
 
 read_temperature() {
@@ -550,8 +725,15 @@ write_state_file() {
     local pwm="$4"
     local curve_id="$5"
     local sensor_path="$6"
+    local current_time
 
     local percent current_time uptime fan_label_json curve_id_json sensor_path_json
+    local error_json
+    if [ -n "$LAST_RELOAD_ERROR" ]; then
+        error_json="\"$(json_escape "$LAST_RELOAD_ERROR")\""
+    else
+        error_json="null"
+    fi
 
     percent=$(pwm_to_percent "$pwm")
     current_time=$(date +%s)
@@ -587,7 +769,12 @@ write_state_file() {
     "pid": $$,
     "uptime": $uptime,
     "last_update": $current_time,
-    "config_reloads": $CONFIG_RELOAD_COUNT
+    "config_reloads": $CONFIG_RELOAD_COUNT,
+    "last_reload": {
+      "attempt_time": $LAST_RELOAD_TIME,
+      "status": "$LAST_RELOAD_STATUS",
+      "error": $error_json
+    }
   },
   "stats": {
     "max_temp": ${MAX_TEMP:-0},
@@ -608,6 +795,12 @@ daemon_cleanup() {
 
 daemon_main_loop() {
     log_msg notice "FanXpert 守护进程启动"
+
+    # 确保 UCI 配置存在且结构完整
+    ensure_uci_config
+
+    # 确保 PID 文件目录存在
+    mkdir -p /tmp/run
 
     # 记录启动时间
     DAEMON_START_TIME=$(date +%s)
@@ -703,8 +896,12 @@ EOF
         # 检查是否需要重载配置
         if [ -f "$RELOAD_FLAG" ]; then
             rm -f "$RELOAD_FLAG"
+            # 重置状态，准备记录本次重载结果
+            reset_reload_status
             reload_config_from_uci
-            reload_runtime_config "$fan_id" || log_msg warn "保留当前运行配置"
+            if ! reload_runtime_config "$fan_id"; then
+                log_msg warn "保留当前运行配置 (重载失败)"
+            fi
         fi
 
         # 读取温度
@@ -1029,22 +1226,185 @@ EOF
     echo '{"status":"started","message":"Calibration started in background"}'
 }
 
+update_calibrate_progress() {
+    local progress="$1"
+    local stage="$2"
+    local message="$3"
+    local feedback_available="${4:-false}"
+    local fallback="${5:-false}"
+    local result="${6:-null}"
+    local status="running"
+
+    case "$stage" in
+        completed)
+            status="completed"
+            ;;
+        failed)
+            status="failed"
+            ;;
+    esac
+
+    cat > "$CALIBRATE_PROGRESS_FILE" <<EOF
+{
+  "status": "$status",
+  "progress": $progress,
+  "stage": "$stage",
+  "message": "$message",
+  "feedback_available": $feedback_available,
+  "fallback": $fallback,
+  "result": $result
+}
+EOF
+}
+
 calibrate_fan_async() {
     local fan_id="$1"
     local pwm_path="$2"
+    local fan_input_path="${pwm_path%pwm*}fan${pwm_path##*pwm}_input"
+    local has_feedback=0
+    local feedback_available=false
+    local final_pwm=0
+    local final_percent=0
+    local result_json="null"
 
-    # 启用 PWM
+    # 1. 检测转速传感器是否存在
+    if [ -r "$fan_input_path" ]; then
+        has_feedback=1
+        feedback_available=true
+        log_msg debug "校准: 检测到转速传感器 $fan_input_path"
+    else
+        log_msg warn "校准: 未检测到转速传感器，将使用估算模式"
+    fi
+
+    # 启用手动控制
     echo 1 > "${pwm_path}_enable" 2>/dev/null || true
+    echo 0 > "$pwm_path"
+    sleep 2
 
-    # 阶段 1: 粗测（步进 10%）
-    update_calibrate_progress 5 "coarse" "粗测阶段: 步进 10%..."
+    local max_pwm=255
+
+    # ============================================================
+    # 分支 A：有转速反馈 → 真反馈检测
+    # ============================================================
+    if [ "$has_feedback" -eq 1 ]; then
+        log_msg notice "校准: 开始真反馈检测 (步进 5% PWM)"
+        update_calibrate_progress 5 "coarse" "粗测阶段: 步进 5%..." true false "null"
+
+        local step=$((max_pwm * 5 / 100))
+        [ "$step" -lt 1 ] && step=1
+        local test_pwm=0
+        local found_start=0
+        local final_rpm=0
+
+        while [ "$test_pwm" -le "$max_pwm" ]; do
+            echo "$test_pwm" > "$pwm_path"
+
+            # 等待风扇稳定：最多 5 秒，每秒重试读取 RPM
+            local waited=0
+            local rpm=0
+            while [ "$waited" -lt 5 ]; do
+                sleep 1
+                waited=$((waited + 1))
+                rpm=$(read_fan_rpm "$pwm_path" 2>/dev/null || echo "")
+                if [ -n "$rpm" ] && [ "$rpm" -gt 0 ]; then
+                    break
+                fi
+            done
+
+            local progress=$((10 + test_pwm * 30 / max_pwm))
+            [ "$progress" -gt 40 ] && progress=40
+            update_calibrate_progress "$progress" "coarse" "粗测: PWM=$test_pwm, RPM=${rpm:-0}" true false "null"
+
+            if [ -n "$rpm" ] && [ "$rpm" -gt 0 ]; then
+                found_start=$test_pwm
+                final_rpm=$rpm
+                log_msg notice "校准: 粗测找到启动点 PWM=$test_pwm, RPM=$rpm"
+                break
+            fi
+
+            test_pwm=$((test_pwm + step))
+        done
+
+        if [ "$found_start" -eq 0 ]; then
+            update_calibrate_progress 100 "failed" "未检测到风扇转动（转速传感器无响应）" true false "null"
+            echo 0 > "$pwm_path"
+            log_msg err "校准失败: 未检测到风扇转动"
+            return 1
+        fi
+
+        # 细测阶段：在粗测点前后 ±2 步范围，步进 1%
+        update_calibrate_progress 45 "fine" "细测阶段: 精确定位..." true false "null"
+        local range_start=$((found_start - step * 2))
+        [ "$range_start" -lt 0 ] && range_start=0
+        local range_end=$((found_start + step * 2))
+        [ "$range_end" -gt "$max_pwm" ] && range_end=$max_pwm
+
+        local fine_step=$((max_pwm / 100))
+        [ "$fine_step" -lt 1 ] && fine_step=1
+        local final_start=0
+
+        test_pwm=$range_start
+        echo 0 > "$pwm_path"
+        sleep 2
+
+        while [ "$test_pwm" -le "$range_end" ]; do
+            echo "$test_pwm" > "$pwm_path"
+
+            local waited=0
+            local rpm=0
+            while [ "$waited" -lt 5 ]; do
+                sleep 1
+                waited=$((waited + 1))
+                rpm=$(read_fan_rpm "$pwm_path" 2>/dev/null || echo "")
+                if [ -n "$rpm" ] && [ "$rpm" -gt 0 ]; then
+                    break
+                fi
+            done
+
+            local progress=$((45 + (test_pwm - range_start) * 40 / (range_end - range_start)))
+            [ "$progress" -gt 85 ] && progress=85
+            update_calibrate_progress "$progress" "fine" "细测: PWM=$test_pwm, RPM=${rpm:-0}" true false "null"
+
+            if [ -n "$rpm" ] && [ "$rpm" -gt 0 ] && [ "$final_start" -eq 0 ]; then
+                final_start=$test_pwm
+                final_rpm=$rpm
+                log_msg notice "校准: 细测最终启动点 PWM=$test_pwm, RPM=$rpm"
+                break
+            fi
+
+            test_pwm=$((test_pwm + fine_step))
+        done
+
+        [ "$final_start" -eq 0 ] && final_start=$found_start
+        final_pwm=$final_start
+        final_percent=$((final_pwm * 100 / max_pwm))
+        result_json="{\"pwm_value\":$final_pwm,\"percent\":$final_percent,\"rpm\":$final_rpm}"
+
+        update_calibrate_progress 90 "saving" "保存结果..." true false "$result_json"
+        sleep 1
+
+        uci set "fanxpert.${fan_id}.pwm_min_start=$final_percent"
+        uci set "fanxpert.${fan_id}.pwm_min_start_source=measured"
+        uci set "fanxpert.${fan_id}.pwm_min_start_timestamp=$(date +%s)"
+        uci commit fanxpert
+
+        log_msg notice "风扇 $fan_id 校准完成: 启动阈值 = ${final_percent}% (PWM=$final_pwm, RPM=$final_rpm) [实测]"
+        update_calibrate_progress 100 "completed" "校准完成！" true false "$result_json"
+
+        echo "$((max_pwm / 2))" > "$pwm_path"
+        return 0
+    fi
+
+    # ============================================================
+    # 分支 B：无转速反馈 → 估算回退
+    # ============================================================
+    log_msg warn "校准: 无转速反馈，使用估算模式 (硬编码阈值)"
+    update_calibrate_progress 5 "coarse" "估算模式: 无转速传感器" false true "null"
     sleep 1
 
-    local found_start=0
+    local step=$((max_pwm / 10))
     local test_pwm=0
-    local max_pwm=255
-    local step
-    step=$((max_pwm / 10))
+    local found_start=0
 
     # 先设置为 0 确保风扇停止
     echo 0 > "$pwm_path"
@@ -1054,25 +1414,24 @@ calibrate_fan_async() {
         echo "$test_pwm" > "$pwm_path"
         sleep 2
 
+        # 硬编码阈值 25% PWM
         if [ "$test_pwm" -ge 25 ]; then
             found_start=$test_pwm
             break
         fi
 
         test_pwm=$((test_pwm + step))
-        local progress
-        progress=$((10 + test_pwm * 30 / max_pwm))
-        update_calibrate_progress "$progress" "coarse" "粗测: PWM=$test_pwm"
+        local progress=$((10 + test_pwm * 30 / max_pwm))
+        update_calibrate_progress "$progress" "coarse" "估算: PWM=$test_pwm" false true "null"
     done
 
     if [ "$found_start" -eq 0 ]; then
-        update_calibrate_progress 100 "failed" "未找到启动点" "null"
+        update_calibrate_progress 100 "failed" "估算失败: 未找到启动点" false true "null"
         echo 0 > "$pwm_path"
         return 1
     fi
 
-    # 阶段 2: 细测（在粗测结果前后范围内，步进 1%）
-    update_calibrate_progress 45 "fine" "细测阶段: 精确定位..."
+    update_calibrate_progress 45 "fine" "细测阶段: 精确定位..." false true "null"
     sleep 1
 
     local range_start
@@ -1084,6 +1443,7 @@ calibrate_fan_async() {
 
     local fine_step
     fine_step=$((max_pwm / 100))
+    [ "$fine_step" -lt 1 ] && fine_step=1
     local final_start=0
 
     test_pwm=$range_start
@@ -1100,58 +1460,27 @@ calibrate_fan_async() {
         fi
 
         test_pwm=$((test_pwm + fine_step))
-        local progress
-        progress=$((45 + (test_pwm - range_start) * 40 / (range_end - range_start)))
-        update_calibrate_progress "$progress" "fine" "细测: PWM=$test_pwm"
+        local progress=$((45 + (test_pwm - range_start) * 40 / (range_end - range_start)))
+        update_calibrate_progress "$progress" "fine" "细测: PWM=$test_pwm" false true "null"
     done
 
     [ "$final_start" -eq 0 ] && final_start=$found_start
 
-    local percent
-    percent=$((final_start * 100 / max_pwm))
+    final_pwm=$final_start
+    final_percent=$((final_pwm * 100 / max_pwm))
+    result_json="{\"pwm_value\":$final_pwm,\"percent\":$final_percent,\"estimated\":true}"
 
-    # 阶段 3: 写入配置
-    update_calibrate_progress 90 "saving" "保存结果..."
-    sleep 1
+    update_calibrate_progress 90 "saving" "保存估算结果..." false true "$result_json"
 
-    uci set "fanxpert.${fan_id}.pwm_min_start=$percent"
+    uci set "fanxpert.${fan_id}.pwm_min_start=$final_percent"
+    uci set "fanxpert.${fan_id}.pwm_min_start_source=estimated"
+    uci set "fanxpert.${fan_id}.pwm_min_start_timestamp=$(date +%s)"
     uci commit fanxpert
 
-    log_msg notice "风扇 $fan_id 校准完成: 启动阈值 = ${percent}% (PWM=$final_start)"
-
-    # 完成
-    update_calibrate_progress 100 "completed" "校准完成！" "{\"pwm_value\":$final_start,\"percent\":$percent}"
-
-    # 恢复风扇到安全速度
+    log_msg notice "风扇 $fan_id 校准完成: 启动阈值 = ${final_percent}% (PWM=$final_pwm) [估算]"
+    update_calibrate_progress 100 "completed" "校准完成（估算）" false true "$result_json"
     echo "$((max_pwm / 2))" > "$pwm_path"
-}
-
-update_calibrate_progress() {
-    local progress="$1"
-    local stage="$2"
-    local message="$3"
-    local result="${4:-null}"
-    local status="running"
-
-    case "$stage" in
-        completed)
-            status="completed"
-            ;;
-        failed)
-            status="failed"
-            ;;
-    esac
-
-    # shellcheck disable=SC2086
-    cat > "$CALIBRATE_PROGRESS_FILE" <<EOF
-{
-  "status": "$status",
-  "progress": $progress,
-  "stage": "$stage",
-  "message": "$message",
-  "result": $result
-}
-EOF
+    return 0
 }
 
 cmd_calibrate_progress() {
