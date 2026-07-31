@@ -17,6 +17,7 @@ var callStop = rpc.declare({ object: 'fanxpert', method: 'stop', expect: { '': {
 var callRestart = rpc.declare({ object: 'fanxpert', method: 'restart', expect: { '': {} } });
 var callReload = rpc.declare({ object: 'fanxpert', method: 'reload', expect: { '': {} } });
 var calibrationSession = false;
+var _reloadErrorNotification = null;
 var curveDataCache = null;
 var PRESET_CURVES = [ 'silent', 'standard', 'performance' ];
 
@@ -37,6 +38,53 @@ function setNote(id, value) {
 
 	el.textContent = value || '';
 	el.style.display = value ? '' : 'none';
+}
+
+function renderCalibrationResult(status, data) {
+	var container = byId('fanxpert-calibration-result');
+	if (!container) return;
+
+	if (!data || !data.result) {
+		status = 'failed';
+	}
+
+	var typeMap = {
+		'success': { cls: 'success', icon: '✓' },
+		'estimated': { cls: 'estimated', icon: '⚠' },
+		'failed': { cls: 'failed', icon: '✗' }
+	};
+	var info = typeMap[status] || typeMap['failed'];
+
+	var title, sub, detail;
+	if (status === 'success') {
+		title = _('Calibration complete: start threshold %s%% (PWM: %s) [Measured]')
+			.replace('%s', data.result.percent).replace('%s', data.result.pwm_value);
+		sub = _('Verified with RPM feedback');
+		detail = data.result.rpm ? _('Stable RPM: %s').replace('%s', data.result.rpm) : '';
+	} else if (status === 'estimated') {
+		title = _('Calibration complete: start threshold %s%% (PWM: %s) [Estimated]')
+			.replace('%s', data.result.percent).replace('%s', data.result.pwm_value);
+		sub = _('No RPM sensor detected, value is estimated. Please verify manually.');
+		detail = '';
+	} else {
+		title = _('Calibration failed: fan not spinning (RPM sensor no response)');
+		sub = (data && data.message) || _('Please check fan connection or set threshold manually.');
+		detail = '';
+	}
+
+	container.className = 'fanxpert-calibration-result ' + info.cls;
+	container.innerHTML = '';
+
+	var titleEl = E('div', { 'class': 'result-title' }, info.icon + ' ' + title);
+	container.appendChild(titleEl);
+
+	if (sub) {
+		container.appendChild(E('div', { 'class': 'result-sub' }, sub));
+	}
+	if (detail) {
+		container.appendChild(E('div', { 'class': 'result-detail' }, detail));
+	}
+	container.style.display = '';
 }
 
 function stateFromStatus(status) {
@@ -354,7 +402,8 @@ function renderCurvePanel() {
 			}, _('Start Calibration')),
 			E('span', { 'id': 'fanxpert-calibration-gate-note', 'class': 'fanxpert-status-note', 'style': 'display:none' }),
 			E('span', { 'id': 'fanxpert-calibration-note', 'class': 'fanxpert-status-note', 'style': 'display:none' })
-		])
+		]),
+		E('div', { 'id': 'fanxpert-calibration-result', 'class': 'fanxpert-calibration-result' })
 	]);
 }
 
@@ -365,10 +414,28 @@ function refreshLiveData() {
 	]).then(function(data) {
 		updateStatus(data[0]);
 		updateCurveCurrentFromStatus(data[0]);
+
+		// 检查重载失败状态
+		var lastReload = data[0].state && data[0].state.daemon && data[0].state.daemon.last_reload;
+		if (lastReload && lastReload.status === 'failed') {
+			if (!_reloadErrorNotification) {
+				_reloadErrorNotification = ui.addNotification(
+					null,
+					E('p', _('Config reload failed: ') + (lastReload.error || _('unknown error')) + _(', please check system logs')),
+					'danger',
+					{ duration: 0 }
+				);
+			}
+		} else {
+			if (_reloadErrorNotification) {
+				_reloadErrorNotification.remove();
+				_reloadErrorNotification = null;
+			}
+		}
+
 		if (data[1] && !data[1].error) {
-			if (data[1].status === 'running')
-				calibrationSession = true;
-			if (!calibrationSession && data[1].status !== 'running') {
+			if (data[1].status === 'running') calibrationSession = true;
+			if (!calibrationSession && data[1].status !== 'running' && data[1].status !== 'completed' && data[1].status !== 'failed') {
 				setNote('fanxpert-calibration-note', '');
 				return;
 			}
@@ -377,6 +444,18 @@ function refreshLiveData() {
 			if (data[1].progress != null)
 				note = note ? note + ' (' + data[1].progress + '%)' : data[1].progress + '%';
 			setNote('fanxpert-calibration-note', note);
+
+			// 校准完成或失败时渲染结果卡片
+			if (data[1].status === 'completed') {
+				var type = data[1].feedback_available ? 'success' : 'estimated';
+				if (data[1].fallback) type = 'estimated';
+				renderCalibrationResult(type, data[1]);
+			} else if (data[1].status === 'failed') {
+				renderCalibrationResult('failed', data[1]);
+			} else {
+				var resultEl = byId('fanxpert-calibration-result');
+				if (resultEl) resultEl.style.display = 'none';
+			}
 		}
 	});
 }
@@ -510,6 +589,24 @@ return view.extend({
 		o.datatype = 'range(0,100)';
 		o.placeholder = '10';
 		o.description = _('Minimum PWM percentage to start the fan (0-100%)');
+
+		o = s.taboption('hardware', form.DummyValue, 'pwm_min_start_source', _('Calibration Source'));
+		o.rawhtml = true;
+		o.cfgvalue = function(section_id) {
+			var src = uci.get('fanxpert', section_id, 'pwm_min_start_source');
+			if (src === 'measured') return _('Measured (verified)');
+			if (src === 'estimated') return _('Estimated (no RPM sensor)');
+			return _('Unknown / Manual');
+		};
+
+		o = s.taboption('hardware', form.DummyValue, 'pwm_min_start_timestamp', _('Calibration Time'));
+		o.cfgvalue = function(section_id) {
+			var ts = parseInt(uci.get('fanxpert', section_id, 'pwm_min_start_timestamp') || '0');
+			if (ts > 0) {
+				return new Date(ts * 1000).toLocaleString();
+			}
+			return '--';
+		};
 
 		o = s.taboption('hardware', form.Flag, 'never_stop', _('Never Stop'));
 		o.rmempty = false;
