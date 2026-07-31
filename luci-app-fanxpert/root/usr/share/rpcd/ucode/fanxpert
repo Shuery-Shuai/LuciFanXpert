@@ -59,9 +59,11 @@ function service_action(action) {
 	return { ok: r.code === 0, code: r.code, output: r.output };
 }
 
-function status() {
+function status(req) {
+	req = request_args(req);
+	let fan = req.fan || '';
 	let service = run(FANXPERT + ' status');
-	let state = parse_json_output(run(FANXPERT + ' info'));
+	let state = parse_json_output(run(FANXPERT + ' info' + (fan ? ' ' + shquote(fan) : '')));
 
 	return {
 		ok: service.code === 0,
@@ -97,7 +99,7 @@ function calibrate_progress() {
 
 return {
 	fanxpert: {
-		status: { call: function(req) { return status(); } },
+		status: { args: { fan: '' }, call: function(req) { return status(req); } },
 		curve_data: { args: { fan: '' }, call: curve_data },
 		calibrate: { args: { fan: '' }, call: calibrate },
 		calibrate_progress: { call: function(req) { return calibrate_progress(); } },
