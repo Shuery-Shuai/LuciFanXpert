@@ -7,8 +7,9 @@
 'require uci';
 
 var FAN_ID = 'cpu_fan';
+var currentFanId = FAN_ID;
 
-var callStatus = rpc.declare({ object: 'fanxpert', method: 'status', expect: { '': {} } });
+var callStatus = rpc.declare({ object: 'fanxpert', method: 'status', params: [ 'fan' ], expect: { '': {} } });
 var callCurveData = rpc.declare({ object: 'fanxpert', method: 'curve_data', params: [ 'fan' ], expect: { '': {} } });
 var callCalibrate = rpc.declare({ object: 'fanxpert', method: 'calibrate', params: [ 'fan' ], expect: { '': {} } });
 var callCalibrateProgress = rpc.declare({ object: 'fanxpert', method: 'calibrate_progress', expect: { '': {} } });
@@ -20,15 +21,76 @@ var calibrationSession = false;
 var _reloadErrorNotification = null;
 var curveDataCache = null;
 var PRESET_CURVES = [ 'silent', 'standard', 'performance' ];
+var liveDataPollHandle = null;
+var fanxpertPollCleanupBound = false;
 
 function byId(id) {
 	return document.getElementById(id);
+}
+
+function cleanupLiveDataPolling() {
+	if (liveDataPollHandle) {
+		try {
+			poll.remove(liveDataPollHandle);
+		} catch (e) {}
+		liveDataPollHandle = null;
+	}
+}
+
+function ensureLiveDataPolling() {
+	if (!fanxpertPollCleanupBound) {
+		window.addEventListener('beforeunload', cleanupLiveDataPolling);
+		fanxpertPollCleanupBound = true;
+	}
 }
 
 function setText(id, value) {
 	var el = byId(id);
 	if (el)
 		el.textContent = value == null || value === '' ? '--' : value;
+}
+
+function getCurrentFanId() {
+	return currentFanId || FAN_ID;
+}
+
+function getAvailableFanIds() {
+	var sections = uci.sections('fanxpert', 'fan') || [];
+	var ids = [];
+	var seen = {};
+
+	for (var i = 0; i < sections.length; i++) {
+		var section_id = sectionName(sections[i]);
+		if (!section_id || seen[section_id])
+			continue;
+		seen[section_id] = true;
+		ids.push(section_id);
+	}
+
+	if (!seen[FAN_ID])
+		ids.unshift(FAN_ID);
+
+	return ids;
+}
+
+function renderFanSelector() {
+	var ids = getAvailableFanIds();
+	var selected = getCurrentFanId();
+	var options = [];
+
+	for (var i = 0; i < ids.length; i++) {
+		var fanId = ids[i];
+		options.push(E('option', { 'value': fanId, 'selected': fanId === selected ? 'selected' : null }, fanId));
+	}
+
+	return E('select', {
+		'id': 'fanxpert-fan-selector',
+		'class': 'cbi-input-select',
+		'change': function(ev) {
+			currentFanId = ev.target.value || FAN_ID;
+			refreshAllData();
+		}
+	}, options);
 }
 
 function setNote(id, value) {
@@ -88,12 +150,19 @@ function renderCalibrationResult(status, data) {
 }
 
 function stateFromStatus(status) {
-	return status && status.state && !status.state.error ? status.state : null;
+	if (status && status.state && !status.state.error) {
+		if (status.state.data) {
+			return status.state.data;
+		}
+		return status.state;
+	}
+	return null;
 }
 
 function currentDevice(status) {
 	var state = stateFromStatus(status);
-	return state && state.devices ? state.devices[FAN_ID] : null;
+	var fanId = getCurrentFanId();
+	return state && state.devices ? state.devices[fanId] || state.devices[FAN_ID] : null;
 }
 
 function serviceRunning(status) {
@@ -388,7 +457,7 @@ function renderCurvePanel() {
 				'class': 'btn cbi-button cbi-button-action',
 				'click': function(ev) {
 					ev.preventDefault();
-					callCalibrate(FAN_ID).then(function(res) {
+					callCalibrate(getCurrentFanId()).then(function(res) {
 						ui.addNotification(null, E('p', res.error || res.message || _('Calibration started')), res.error ? 'danger' : 'info');
 						if (!res.error) {
 							calibrationSession = true;
@@ -409,7 +478,7 @@ function renderCurvePanel() {
 
 function refreshLiveData() {
 	return Promise.all([
-		callStatus().catch(function(err) { return { state: { error: err.message || String(err) } }; }),
+		callStatus(getCurrentFanId()).catch(function(err) { return { state: { error: err.message || String(err) } }; }),
 		callCalibrateProgress().catch(function() { return null; })
 	]).then(function(data) {
 		updateStatus(data[0]);
@@ -461,7 +530,7 @@ function refreshLiveData() {
 }
 
 function refreshCurveData() {
-	return callCurveData(FAN_ID).then(function(data) {
+	return callCurveData(getCurrentFanId()).then(function(data) {
 		if (!data.error) {
 			curveDataCache = data;
 			drawCurve(data);
@@ -542,8 +611,8 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load('fanxpert'),
-			callStatus().catch(function(err) { return { state: { error: err.message || String(err) } }; }),
-			callCurveData(FAN_ID).catch(function(err) { return { error: err.message || String(err) }; })
+			callStatus(getCurrentFanId()).catch(function(err) { return { state: { error: err.message || String(err) } }; }),
+			callCurveData(getCurrentFanId()).catch(function(err) { return { error: err.message || String(err) }; })
 		]);
 	},
 
@@ -650,7 +719,7 @@ return view.extend({
 		addCustomCurveMeta(s);
 		addCurveOptions(s);
 
-		return m.render().then(function(formNode) {
+			return m.render().then(function(formNode) {
 			var node = E('div', {}, [
 				E('link', { 'rel': 'stylesheet', 'href': L.resource('fanxpert/fanxpert.css') + '?v=20260605-modern4' }),
 				E('h2', {}, _('FanXpert')),
@@ -666,10 +735,22 @@ return view.extend({
 					curveDataCache = data[2];
 					drawCurve(data[2]);
 				}
-				poll.add(refreshLiveData, 3);
+				ensureLiveDataPolling();
+				cleanupLiveDataPolling();
+				liveDataPollHandle = poll.add(refreshLiveData, 3);
 			}, 0);
 
 			return node;
 		});
+	},
+
+	unload: function() {
+		cleanupLiveDataPolling();
+		if (_reloadErrorNotification) {
+			try {
+				_reloadErrorNotification.remove();
+			} catch (e) {}
+			_reloadErrorNotification = null;
+		}
 	}
 });
