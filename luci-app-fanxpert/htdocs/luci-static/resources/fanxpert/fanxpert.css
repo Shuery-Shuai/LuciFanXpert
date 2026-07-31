@@ -78,54 +78,46 @@
 	margin-top: 8px;
 }
 
-.fanxpert-sensor-path {
-	display: inline-block;
-	max-width: 560px;
-	padding: 5px 7px;
-	border: 1px solid #d7dde5;
-	border-radius: 4px;
-	background: #f7f9fc;
-	color: #344054;
-	font-size: 12px;
-	line-height: 1.35;
-	overflow-wrap: anywhere;
-}
+/* ============================================================
+   Calibration Result Cards
+   ============================================================ */
 
-.fanxpert-progress {
+.fanxpert-calibration-result {
 	display: none;
-	max-width: 420px;
 	margin-top: 10px;
+	padding: 10px 14px;
+	border-radius: 6px;
+	border-left-width: 4px;
+	border-left-style: solid;
+	background: #f8fafc;
 }
 
-.fanxpert-progress-track {
-	position: relative;
-	height: 18px;
-	overflow: hidden;
-	border: 1px solid #cbd5e1;
-	border-radius: 4px;
-	background: #edf2f7;
+.fanxpert-calibration-result.success {
+	border-left-color: #16a34a;
 }
 
-.fanxpert-progress-fill {
-	width: 0%;
-	height: 100%;
-	background: #1e88e5;
-	transition: width 0.3s;
+.fanxpert-calibration-result.estimated {
+	border-left-color: #f59e0b;
 }
 
-.fanxpert-progress-text {
-	position: absolute;
-	inset: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	color: #1f2937;
-	font-size: 11px;
+.fanxpert-calibration-result.failed {
+	border-left-color: #dc2626;
+}
+
+.fanxpert-calibration-result .result-title {
 	font-weight: 600;
+	font-size: 14px;
 }
 
-.fanxpert-message {
-	margin-top: 5px;
+.fanxpert-calibration-result .result-sub {
 	color: #5f6b7a;
 	font-size: 12px;
+	margin-top: 2px;
+}
+
+.fanxpert-calibration-result .result-detail {
+	color: #7a8491;
+	font-size: 11px;
+	margin-top: 4px;
+	font-family: monospace;
 }
