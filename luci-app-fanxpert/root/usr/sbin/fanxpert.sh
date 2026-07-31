@@ -351,7 +351,6 @@ reset_curve_to_default() {
 find_temp_sensor() {
     local found_temp=0
     local temp_path=""
-    local matched_name=""
 
     # 第一轮：优先匹配常见 CPU/热区关键词
     for hwmon in /sys/class/hwmon/hwmon*; do
@@ -364,7 +363,6 @@ find_temp_sensor() {
                 *cpu*|*thermal*|*coretemp*|*k10temp*|*acpitz*|*pch*|*corsair*)
                     temp_path="$hwmon/temp1"
                     found_temp=1
-                    matched_name="$name"
                     log_msg debug "找到温度传感器: $temp_path (name: $name, 优先级匹配)"
                     break
                     ;;
@@ -397,7 +395,6 @@ find_temp_sensor() {
 find_pwm_controller() {
     local found_pwm=0
     local pwm_path=""
-    local matched_name=""
 
     # 第一轮：优先查找存在 pwm1_enable 且可写的设备
     for hwmon in /sys/class/hwmon/hwmon*; do
@@ -425,7 +422,6 @@ find_pwm_controller() {
                     *pwm*|*fan*|*nct*|*it87*|*w837*|*w836*|*f718*|*nuvoton*)
                         pwm_path="$hwmon/pwm1"
                         found_pwm=1
-                        matched_name="$name"
                         log_msg debug "找到 PWM 控制器: $pwm_path (name: $name, 关键词匹配)"
                         break
                         ;;
