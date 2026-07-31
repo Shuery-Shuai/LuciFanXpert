@@ -1,12 +1,12 @@
 #
-# Copyright (C) 2026 FanXpert
+# Copyright (C) 2026 Shuery-Shuai
 # Licensed under Apache License 2.0
 #
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fanxpert
-PKG_VERSION:=0.1.0-alpha1
+PKG_VERSION:=0.1.0_alpha2
 PKG_RELEASE:=1
 
 PKG_LICENSE:=Apache-2.0
