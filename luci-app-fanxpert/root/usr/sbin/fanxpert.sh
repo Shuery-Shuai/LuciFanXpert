@@ -30,6 +30,8 @@ DAEMON_START_TIME=0
 CONFIG_RELOAD_COUNT=0
 ERROR_COUNT=0
 ERROR_WINDOW_START=0
+LAST_STATE_CONTENT=""
+LAST_STATE_WRITE_TIME=0
 
 # ============================================================
 # LOGGING
@@ -111,7 +113,10 @@ json_escape() {
     printf '%s' "$1" | sed \
         -e 's/\\/\\\\/g' \
         -e 's/"/\\"/g' \
-        -e 's/	/\\t/g'
+        -e 's/\t/\\t/g' \
+        -e 's/\r/\\r/g' \
+        -e ':a;N;$!ba;s/\n/\\n/g' \
+        -e 's/[^[:print:]]/ /g'
 }
 
 # ============================================================
@@ -215,10 +220,48 @@ EOF
         fi
     done
 
-    # 3. 如果配置被创建或修改，提交 UCI
+    # 3. 检查预设曲线是否完整
+    local preset
+    for preset in silent standard performance; do
+        if ! uci -q get "fanxpert.${preset}" >/dev/null 2>&1; then
+            case "$preset" in
+                silent)
+                    uci set fanxpert.silent='curve'
+                    uci set fanxpert.silent.type='bezier'
+                    uci set fanxpert.silent.sensor='cpu_temp'
+                    uci set fanxpert.silent.temp_min='40'
+                    uci set fanxpert.silent.temp_max='70'
+                    uci set fanxpert.silent.pwm_start='20'
+                    uci set fanxpert.silent.pwm_end='70'
+                    ;;
+                standard)
+                    uci set fanxpert.standard='curve'
+                    uci set fanxpert.standard.type='bezier'
+                    uci set fanxpert.standard.sensor='cpu_temp'
+                    uci set fanxpert.standard.temp_min='35'
+                    uci set fanxpert.standard.temp_max='75'
+                    uci set fanxpert.standard.pwm_start='30'
+                    uci set fanxpert.standard.pwm_end='100'
+                    ;;
+                performance)
+                    uci set fanxpert.performance='curve'
+                    uci set fanxpert.performance.type='bezier'
+                    uci set fanxpert.performance.sensor='cpu_temp'
+                    uci set fanxpert.performance.temp_min='30'
+                    uci set fanxpert.performance.temp_max='65'
+                    uci set fanxpert.performance.pwm_start='40'
+                    uci set fanxpert.performance.pwm_end='100'
+                    ;;
+            esac
+            need_commit=1
+            log_msg notice "Restored missing preset curve: ${preset}"
+        fi
+    done
+
+    # 4. 如果配置被创建或修改，提交 UCI
     if [ "$need_commit" -eq 1 ]; then
         uci commit fanxpert
-        log_msg notice "UCI 配置已更新"
+        log_msg notice "UCI configuration updated"
     fi
 }
 
@@ -242,6 +285,22 @@ load_sensor_config() {
 
     echo "$platform"
     return 0
+}
+
+detect_pwm_max() {
+    local pwm_path="$1"
+    local max_path="${pwm_path%pwm*}pwm${pwm_path##*pwm}_max"
+    local max_value
+
+    if [ -r "$max_path" ]; then
+        max_value=$(cat "$max_path" 2>/dev/null | tr -d ' ')
+        if [ -n "$max_value" ] && [ "$max_value" -eq "$max_value" ] 2>/dev/null && [ "$max_value" -gt 0 ]; then
+            PWM_MAX="$max_value"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 load_curve_config() {
@@ -300,7 +359,7 @@ load_fan_config() {
 }
 
 reload_config_from_uci() {
-    log_msg notice "检测到配置变更，重新加载 UCI 配置"
+    log_msg notice "Configuration change detected, reloading UCI config"
 
     # 重新加载全局配置
     load_uci_config
@@ -724,7 +783,17 @@ write_state_file() {
     local current_time
 
     local percent current_time uptime fan_label_json curve_id_json sensor_path_json
-    local error_json
+    local error_json payload
+    case "$temp" in
+        ''|*[!0-9]*) temp=0 ;;
+    esac
+    case "$pwm" in
+        ''|*[!0-9]*) pwm=0 ;;
+    esac
+    case "$percent" in
+        ''|*[!0-9]*) percent=0 ;;
+    esac
+
     if [ -n "$LAST_RELOAD_ERROR" ]; then
         error_json="\"$(json_escape "$LAST_RELOAD_ERROR")\""
     else
@@ -739,7 +808,7 @@ write_state_file() {
     sensor_path_json=$(json_escape "$sensor_path")
 
     # 计算统计信息
-    if [ ! -f "$STATE_FILE" ] || [ -z "$MAX_TEMP" ]; then
+    if [ ! -f "$STATE_FILE" ] || [ -z "${MAX_TEMP:-}" ]; then
         MAX_TEMP=$temp
         MAX_TEMP_TIME=$current_time
     elif [ "$temp" -gt "$MAX_TEMP" ]; then
@@ -747,12 +816,11 @@ write_state_file() {
         MAX_TEMP_TIME=$current_time
     fi
 
-    # 生成 JSON 状态文件
-    # shellcheck disable=SC2086
-    cat > "$STATE_FILE" <<EOF
+    # 生成 JSON 状态文件，并限制写入频率以降低闪存磨损
+    payload=$(cat <<EOF
 {
   "devices": {
-    "$fan_id": {
+    "$(json_escape "$fan_id")": {
       "label": "$fan_label_json",
       "temp": $temp,
       "pwm": $pwm,
@@ -778,6 +846,13 @@ write_state_file() {
   }
 }
 EOF
+)
+
+    if [ "$payload" != "$LAST_STATE_CONTENT" ] || [ $((current_time - LAST_STATE_WRITE_TIME)) -ge 3 ]; then
+        printf '%s\n' "$payload" > "$STATE_FILE"
+        LAST_STATE_CONTENT="$payload"
+        LAST_STATE_WRITE_TIME=$current_time
+    fi
 }
 
 # ============================================================
@@ -816,6 +891,9 @@ daemon_main_loop() {
     echo $$ > "$PID_FILE"
     trap 'daemon_cleanup' EXIT
     trap 'trap - EXIT; daemon_cleanup; exit 0' INT TERM
+
+    # 清除旧的校准进度文件
+    rm -f "$CALIBRATE_PROGRESS_FILE"
 
     # 等待系统完全启动
     sleep 5
@@ -868,6 +946,9 @@ EOF
 
     # 启用手动控制
     enable_manual_control "$pwm_path"
+
+    # 动态探测 PWM 最大值
+    detect_pwm_max "$pwm_path" || true
 
     # 初始化 PWM 值
     local current_pwm
@@ -1025,11 +1106,18 @@ cmd_reload() {
     fi
 
     touch "$RELOAD_FLAG"
-    log_msg notice "已触发配置重载"
-    echo "已请求 FanXpert 重新加载配置"
+    log_msg notice "Configuration reload requested"
+    echo "FanXpert configuration reload requested"
 }
 
 cmd_status() {
+    local fan_id="${1:-}"
+
+    if [ -n "$fan_id" ] && ! is_valid_id "$fan_id"; then
+        echo '{"error":"Invalid fan id"}'
+        return 1
+    fi
+
     if [ ! -f "$PID_FILE" ]; then
         echo "Status: stopped"
         return 1
@@ -1053,6 +1141,13 @@ cmd_status() {
 }
 
 cmd_info() {
+    local fan_id="${1:-}"
+
+    if [ -n "$fan_id" ] && ! is_valid_id "$fan_id"; then
+        echo '{"error":"Invalid fan id"}'
+        return 1
+    fi
+
     if [ ! -f "$STATE_FILE" ]; then
         echo '{"error":"State file not found"}'
         return 1
@@ -1161,6 +1256,18 @@ cmd_reset_curve() {
 
 CALIBRATE_PROGRESS_FILE="/tmp/fanxpert.calibrate.progress"
 
+restore_calibration_pwm() {
+    local pwm_path="$1"
+    local saved_pwm_file="/tmp/fanxpert.calibrate.saved_pwm"
+    local saved_pwm=0
+
+    if [ -f "$saved_pwm_file" ]; then
+        saved_pwm=$(cat "$saved_pwm_file" 2>/dev/null || echo 0)
+    fi
+
+    echo "${saved_pwm:-0}" > "$pwm_path" 2>/dev/null || true
+}
+
 cmd_calibrate() {
     local fan_id="${1:-cpu_fan}"
 
@@ -1202,16 +1309,25 @@ EOF
         fi
     fi
 
-    log_msg notice "开始校准风扇 $fan_id ($fan_label)"
+    log_msg notice "Starting calibration for fan $fan_id ($fan_label)"
+
+    local saved_pwm=0
+    if [ -r "$pwm_path" ]; then
+        saved_pwm=$(cat "$pwm_path" 2>/dev/null || echo 0)
+    fi
+    echo "$saved_pwm" > "/tmp/fanxpert.calibrate.saved_pwm"
 
     # 初始化进度文件
+    local safe_fan_id
+    safe_fan_id=$(json_escape "$fan_id")
+
     cat > "$CALIBRATE_PROGRESS_FILE" <<EOF
 {
   "status": "running",
   "progress": 0,
   "stage": "init",
   "message": "正在初始化...",
-  "fan_id": "$fan_id",
+  "fan_id": "$safe_fan_id",
   "result": null
 }
 EOF
@@ -1240,12 +1356,15 @@ update_calibrate_progress() {
             ;;
     esac
 
+    local safe_message
+    safe_message=$(json_escape "$message")
+
     cat > "$CALIBRATE_PROGRESS_FILE" <<EOF
 {
   "status": "$status",
   "progress": $progress,
   "stage": "$stage",
-  "message": "$message",
+  "message": "$safe_message",
   "feedback_available": $feedback_available,
   "fallback": $fallback,
   "result": $result
@@ -1277,7 +1396,8 @@ calibrate_fan_async() {
     echo 0 > "$pwm_path"
     sleep 2
 
-    local max_pwm=255
+    local max_pwm="$PWM_MAX"
+    [ -n "$max_pwm" ] || max_pwm=255
 
     # ============================================================
     # 分支 A：有转速反馈 → 真反馈检测
@@ -1323,8 +1443,8 @@ calibrate_fan_async() {
 
         if [ "$found_start" -eq 0 ]; then
             update_calibrate_progress 100 "failed" "未检测到风扇转动（转速传感器无响应）" true false "null"
-            echo 0 > "$pwm_path"
-            log_msg err "校准失败: 未检测到风扇转动"
+            restore_calibration_pwm "$pwm_path"
+            log_msg err "Calibration failed: fan did not spin"
             return 1
         fi
 
@@ -1387,7 +1507,7 @@ calibrate_fan_async() {
         log_msg notice "风扇 $fan_id 校准完成: 启动阈值 = ${final_percent}% (PWM=$final_pwm, RPM=$final_rpm) [实测]"
         update_calibrate_progress 100 "completed" "校准完成！" true false "$result_json"
 
-        echo "$((max_pwm / 2))" > "$pwm_path"
+        restore_calibration_pwm "$pwm_path"
         return 0
     fi
 
@@ -1423,7 +1543,7 @@ calibrate_fan_async() {
 
     if [ "$found_start" -eq 0 ]; then
         update_calibrate_progress 100 "failed" "估算失败: 未找到启动点" false true "null"
-        echo 0 > "$pwm_path"
+        restore_calibration_pwm "$pwm_path"
         return 1
     fi
 
@@ -1473,9 +1593,9 @@ calibrate_fan_async() {
     uci set "fanxpert.${fan_id}.pwm_min_start_timestamp=$(date +%s)"
     uci commit fanxpert
 
-    log_msg notice "风扇 $fan_id 校准完成: 启动阈值 = ${final_percent}% (PWM=$final_pwm) [估算]"
+    log_msg notice "Fan $fan_id calibration completed: start threshold = ${final_percent}% (PWM=$final_pwm) [estimated]"
     update_calibrate_progress 100 "completed" "校准完成（估算）" false true "$result_json"
-    echo "$((max_pwm / 2))" > "$pwm_path"
+    restore_calibration_pwm "$pwm_path"
     return 0
 }
 
@@ -1501,7 +1621,7 @@ FanXpert - 高级风扇控制
   restart              重启监控进程
   reload               重新加载配置（不重启进程）
   status               显示运行状态
-  info                 显示实时数据（JSON 格式）
+  info [fan]           显示实时数据（JSON 格式，可指定风扇）
   curve-data [fan]     显示曲线数据（JSON 格式）
   reset-curve <id>     恢复曲线为默认值
   calibrate [fan]      校准风扇启动阈值
@@ -1540,10 +1660,10 @@ case "$1" in
         cmd_reload
         ;;
     status)
-        cmd_status
+        cmd_status "$2"
         ;;
     info)
-        cmd_info
+        cmd_info "$2"
         ;;
     curve-data)
         cmd_curve_data "$2"
