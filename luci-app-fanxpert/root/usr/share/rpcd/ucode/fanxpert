@@ -9,7 +9,7 @@ const INIT = '/etc/init.d/fanxpert';
 const FAN_ID_RE = /^[A-Za-z0-9_]+$/;
 
 function shquote(s) {
-	return "'" + replace(s ?? '', "'", "'\\''") + "'";
+	return "'" + replace(s ?? '', /'/g, "'\\''") + "'";
 }
 
 function run(cmd) {
@@ -37,6 +37,9 @@ function parse_json_output(result) {
 		let parsed = json(text);
 		if (type(parsed) == 'object') {
 			parsed.ok = result.code === 0 && !parsed.error;
+			if (result.code !== 0 && !parsed.error) {
+				parsed.error = 'Command exited with code ' + result.code;
+			}
 			parsed.code = result.code;
 			return parsed;
 		}
