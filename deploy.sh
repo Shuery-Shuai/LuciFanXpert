@@ -127,39 +127,6 @@ command -v uci >/dev/null 2>&1 || exit 1
 EOF
 }
 
-backup_remote_config() {
-    run_remote_script <<'EOF'
-if [ -f /etc/config/fanxpert ]; then
-    cp /etc/config/fanxpert /tmp/fanxpert.config.deploy.bak
-    echo "[config] existing /etc/config/fanxpert preserved"
-else
-    rm -f /tmp/fanxpert.config.deploy.bak
-    echo "[config] no existing config; default template will be installed"
-fi
-EOF
-}
-
-restore_remote_config() {
-    run_remote_script <<'EOF'
-if [ -f /tmp/fanxpert.config.deploy.bak ]; then
-    cp /tmp/fanxpert.config.deploy.bak /etc/config/fanxpert
-    rm -f /tmp/fanxpert.config.deploy.bak
-    echo "[config] restored existing /etc/config/fanxpert"
-fi
-EOF
-}
-
-install_remote_default_config() {
-    run_remote_script <<'EOF'
-if [ ! -f /etc/config/fanxpert ] && [ -f /etc/uci-defaults/80_fanxpert ]; then
-    sh /etc/uci-defaults/80_fanxpert
-    echo "[config] initialized /etc/config/fanxpert from uci-defaults"
-else
-    echo "[config] existing /etc/config/fanxpert kept"
-fi
-EOF
-}
-
 migrate_remote_config() {
     run_remote_script <<'EOF'
 changed=0
@@ -240,13 +207,13 @@ chmod +x /etc/init.d/fanxpert 2>/dev/null || true
 chmod +x /usr/sbin/fanxpert.sh 2>/dev/null || true
 chmod +x /usr/share/rpcd/ucode/fanxpert 2>/dev/null || true
 chmod +x /etc/uci-defaults/80_fanxpert 2>/dev/null || true
-chown root:root /etc/init.d/fanxpert /usr/sbin/fanxpert.sh 2>/dev/null || true
-chown root:root /etc/config/fanxpert 2>/dev/null || true
-chown root:root /etc/uci-defaults/80_fanxpert 2>/dev/null || true
-chown root:root /usr/share/luci/menu.d/luci-app-fanxpert.json 2>/dev/null || true
-chown root:root /usr/share/rpcd/acl.d/luci-app-fanxpert.json 2>/dev/null || true
-chown root:root /usr/share/rpcd/ucode/fanxpert 2>/dev/null || true
-chown -R root:root /www/luci-static/resources/fanxpert /www/luci-static/resources/view/fanxpert.js 2>/dev/null || true
+for file in /etc/init.d/fanxpert /usr/sbin/fanxpert.sh /etc/config/fanxpert /etc/uci-defaults/80_fanxpert \
+           /usr/share/luci/menu.d/luci-app-fanxpert.json /usr/share/rpcd/acl.d/luci-app-fanxpert.json \
+           /usr/share/rpcd/ucode/fanxpert; do
+    [ -e "$file" ] && chown root:root "$file" 2>/dev/null || true
+done
+[ -d /www/luci-static/resources/fanxpert ] && chown -R root:root /www/luci-static/resources/fanxpert 2>/dev/null || true
+[ -f /www/luci-static/resources/view/fanxpert.js ] && chown root:root /www/luci-static/resources/view/fanxpert.js 2>/dev/null || true
 
 echo "[rpcd] restarting RPC daemon"
 if [ -x /etc/init.d/rpcd ]; then
@@ -362,12 +329,8 @@ check_remote_prerequisites || die "remote shell, tar, or uci command not availab
 ok "remote prerequisites available"
 
 step "Copying root filesystem files (config, init, scripts)"
-backup_remote_config
-copy_tree "$ROOT_DIR/luci-app-fanxpert/root" "/"
-restore_remote_config
-install_remote_default_config
-migrate_remote_config
-ok "root files copied"
+ copy_tree "$ROOT_DIR/luci-app-fanxpert/root" "/"
+
 
 step "Copying LuCI static files (JavaScript, CSS)"
 copy_tree "$ROOT_DIR/luci-app-fanxpert/htdocs" "/www"
