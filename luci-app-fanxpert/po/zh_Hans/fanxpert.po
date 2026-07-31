@@ -210,3 +210,27 @@ msgstr "启动阈值"
 
 msgid "Calibration failed"
 msgstr "校准失败"
+
+msgid "Measured (verified)"
+msgstr "实测（已验证）"
+
+msgid "Estimated (no RPM sensor)"
+msgstr "估算（无转速传感器）"
+
+msgid "Unknown / Manual"
+msgstr "未知 / 手动"
+
+msgid "Calibration Source"
+msgstr "校准来源"
+
+msgid "Calibration Time"
+msgstr "校准时间"
+
+msgid "Config reload failed: "
+msgstr "配置重载失败："
+
+msgid "Verified with RPM feedback"
+msgstr "已验证转速反馈"
+
+msgid "Stable RPM: "
+msgstr "稳定转速："

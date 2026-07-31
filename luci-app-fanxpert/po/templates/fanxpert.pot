@@ -209,3 +209,51 @@ msgstr ""
 
 msgid "Calibration failed"
 msgstr ""
+
+msgid "Measured (verified)"
+msgstr ""
+
+msgid "Estimated (no RPM sensor)"
+msgstr ""
+
+msgid "Unknown / Manual"
+msgstr ""
+
+msgid "Calibration Source"
+msgstr ""
+
+msgid "Calibration Time"
+msgstr ""
+
+msgid "Config reload failed: "
+msgstr ""
+
+msgid "Verified with RPM feedback"
+msgstr ""
+
+msgid "Stable RPM: "
+msgstr ""
+
+msgid "Measured (verified)"
+msgstr ""
+
+msgid "Estimated (no RPM sensor)"
+msgstr ""
+
+msgid "Unknown / Manual"
+msgstr ""
+
+msgid "Calibration Source"
+msgstr ""
+
+msgid "Calibration Time"
+msgstr ""
+
+msgid "Config reload failed: "
+msgstr ""
+
+msgid "Verified with RPM feedback"
+msgstr ""
+
+msgid "Stable RPM: "
+msgstr ""
