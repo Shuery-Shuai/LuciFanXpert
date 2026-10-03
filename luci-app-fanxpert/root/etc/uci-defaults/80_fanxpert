@@ -19,6 +19,14 @@ chmod 755 /etc/init.d/fanxpert 2>/dev/null || true
 chmod 755 /usr/sbin/fanxpert.sh 2>/dev/null || true
 chmod 644 /usr/share/rpcd/ucode/fanxpert 2>/dev/null || true
 
+# 升级安装时 /lib/functions.sh 只在 PKG_UPGRADE != 1（全新安装）才执行 "$i" enable，
+# 因此从「因权限问题没能 enable 的旧包」升级上来的设备，重启后仍不会自启。
+# 这里在安装阶段补一次（且放在提前退出之前），使受害者设备自我修复。
+# 仅当配置里明确启用时才补，避免覆盖用户主动禁用的选择。
+if [ "$(uci -q get fanxpert.settings.enabled)" = "1" ] && [ ! -e /etc/rc.d/S99fanxpert ]; then
+    /etc/init.d/fanxpert enable 2>/dev/null || true
+fi
+
 
 uci -q get fanxpert.settings >/dev/null 2>&1 && exit 0
 

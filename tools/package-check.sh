@@ -135,6 +135,17 @@ else
     fail "uci-defaults 的自愈逻辑在提前退出之后（升级时不会执行）"
 fi
 
+enable_line=$(grep -n '/etc/init.d/fanxpert enable' "$UCI_DEFAULTS" 2>/dev/null | cut -d: -f1)
+if [ -z "$enable_line" ]; then
+    fail "uci-defaults 未在安装时补开机自启（升级自坏包的用户重启后仍会失控）"
+elif [ -n "$exit_line" ] && [ "$enable_line" -gt "$exit_line" ]; then
+    fail "uci-defaults 的 enable 逻辑在提前退出之后（升级场景不会执行）"
+elif [ "$enable_line" -gt "$heal_line" ]; then
+    pass "uci-defaults 先补执行位再补开机自启，且都在提前退出之前"
+else
+    fail "启用逻辑必须在 chmod 之后（否则 init 脚本尚不可执行）"
+fi
+
 for j in luci-app-fanxpert/root/usr/share/luci/menu.d/luci-app-fanxpert.json \
          luci-app-fanxpert/root/usr/share/rpcd/acl.d/luci-app-fanxpert.json; do
     if python3 -c "import json,sys; json.load(open(sys.argv[1], encoding='utf-8'))" "$j" 2>/dev/null; then
@@ -153,20 +164,32 @@ if [ -n "${PKG_ARTIFACT:-}" ]; then
     ok_extract=0
     case "$PKG_ARTIFACT" in
         *.ipk)
-            if command -v ar >/dev/null 2>&1; then
+            # 现代 OpenWrt 的 .ipk 是「tar.gz 包着 control.tar.gz / data.tar.gz」；
+            # 更早的 SDK 则产出 ar 归档。两种都试，任一成功即可。
+            if tar -xzf "$PKG_ARTIFACT" -C "$WORK" 2>/dev/null && [ -f "$WORK/data.tar.gz" ]; then
+                tar -xzf "$WORK/data.tar.gz" -C "$WORK" 2>/dev/null && ok_extract=1
+            elif command -v ar >/dev/null 2>&1; then
                 (cd "$WORK" && ar x "$(cd "$(dirname "$PKG_ARTIFACT")" && pwd)/$(basename "$PKG_ARTIFACT")" 2>/dev/null) &&
                     tar -xzf "$WORK/data.tar.gz" -C "$WORK" 2>/dev/null && ok_extract=1
             fi
+            if [ "$ok_extract" -ne 1 ]; then
+                fail "无法解包 .ipk（打包格式变化或缺少工具）——产物级校验不能静默跳过"
+            fi
             ;;
         *.apk)
-            # apk v3 包为 gzip 压缩的 tar 流，取第一个可解出的 tar 段即可
-            tar -xzf "$PKG_ARTIFACT" -C "$WORK" 2>/dev/null && ok_extract=1
+            # apk v3 使用 ADB 私有容器（内含裸 deflate 段，没有标准 tar 头），
+            # 不借助 apk-tools 无法可靠解析。此处明确标注「未做产物级校验」，
+            # 而不是打印 SKIP 后当作通过——apk 渠道的保障来自：
+            #   1) 源文件模式断言（根因层，两个渠道共用同一份源码）
+            #   2) ipk 渠道的产物级校验（同一套 luci.mk 安装规则）
+            #   3) 真机安装验收（apk add 后确认 755 且服务自启）
+            printf '  WARN apk v3 为 ADB 私有容器，未做产物级校验（依赖源文件断言 + ipk 产物断言 + 真机验收）\n'
+            WARNED=$((WARNED + 1))
+            rm -rf "$WORK"; trap - EXIT INT TERM
             ;;
     esac
 
-    if [ "$ok_extract" -ne 1 ]; then
-        printf '  SKIP 无法解包（缺少 ar/tar 或格式不支持），仅完成源仓库断言\n'
-    else
+    if [ "$ok_extract" -eq 1 ]; then
         for pair in "etc/init.d/fanxpert" "usr/sbin/fanxpert.sh" "etc/uci-defaults/80_fanxpert"; do
             target="$WORK/$pair"
 

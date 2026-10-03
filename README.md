@@ -479,7 +479,8 @@ chmod 755 /etc/init.d/fanxpert /usr/sbin/fanxpert.sh
 git ls-files -s luci-app-fanxpert/root/etc/init.d/fanxpert   # 期望 100755
 sh tools/package-check.sh                                    # 打包自检
 
-# 3) 安装自愈：uci-defaults 在 enable/start 之前补回可执行位（升级旧包时自动修复）
+# 3) 安装自愈：uci-defaults 在 enable/start 之前补回可执行位，并在
+#    配置为启用状态时补回开机自启（升级安装路径不会执行 enable）
 ```
 
 > [!NOTE]
