@@ -12,6 +12,8 @@ PROGRAM_NAME="FANXPERT"
 STATE_FILE="/tmp/fanxpert.state"
 PID_FILE="/tmp/run/fanxpert.pid"
 RELOAD_FLAG="/tmp/fanxpert.reload_requested"
+# 运行期观测到的「PWM 档位 → 最低转速」，每行: <fan_id> <档位百分比> <rpm>
+RPM_MAP_FILE="/tmp/fanxpert.rpm_map"
 
 # 重载状态跟踪（用于写入 state 文件）
 LAST_RELOAD_TIME=0
@@ -24,6 +26,18 @@ CALIBRATE_PROGRESS_FILE="/tmp/fanxpert.calibrate.progress"
 # PWM 控制范围
 PWM_MIN=0
 PWM_MAX=255
+
+# 升速/降速时间默认值（秒 = 从最低转速到最高转速所需时间；0 = 不限制）
+RAMP_UP_DEFAULT=30
+RAMP_DOWN_DEFAULT=120
+
+# 阶梯曲线的默认档数（每条曲线可用 step_levels 覆盖，范围 2-20）
+STEP_LEVELS=5
+STEP_LEVELS_MIN=2
+STEP_LEVELS_MAX=20
+
+# 极致静音的固定下调比例（%）：降低噪音，但不会低于校准得到的最低可用转速
+QUIET_MODE_OFFSET=15
 
 # 运行时全局变量
 DAEMON_START_TIME=0
@@ -60,6 +74,10 @@ log_msg() {
             [ "$LOG_LEVEL" = "debug" ] && \
                 "$LOGGER" -t "$PROGRAM_NAME" -p daemon.debug "$message"
             ;;
+        *)
+            # 未知级别兜底：宁可多记一条 notice，也不要静默丢弃日志
+            "$LOGGER" -t "$PROGRAM_NAME" -p daemon.notice "$message"
+            ;;
     esac
 }
 
@@ -84,13 +102,67 @@ read_fan_rpm() {
     fan_path="${pwm_path%pwm*}fan${pwm_path##*pwm}_input"
     if [ -r "$fan_path" ]; then
         local rpm
-        rpm=$(cat "$fan_path" 2>/dev/null | tr -d ' ')
+        rpm=$(tr -d ' ' < "$fan_path" 2>/dev/null)
         if [ -n "$rpm" ] && [ "$rpm" -eq "$rpm" ] 2>/dev/null; then
             echo "$rpm"
             return 0
         fi
     fi
     return 1
+}
+
+# 记录运行期观测到的「PWM 档位 → 最低转速」，按 10% 分档，供界面参考表使用。
+# 参数: fan_id, percent, rpm
+record_rpm_sample() {
+    local fan_id="$1"
+    local percent="$2"
+    local rpm="$3"
+    local bucket stored tmp
+
+    case "$percent" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    case "$rpm" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+
+    bucket=$(( (percent / 10) * 10 ))
+    stored=$(sed -n "s/^${fan_id} ${bucket} //p" "$RPM_MAP_FILE" 2>/dev/null | head -n 1)
+
+    # 已有更低的观测值就不再重写文件
+    if [ -n "$stored" ] && [ "$rpm" -ge "$stored" ]; then
+        return 0
+    fi
+
+    tmp="${RPM_MAP_FILE}.$$"
+    if [ -f "$RPM_MAP_FILE" ]; then
+        grep -v "^${fan_id} ${bucket} " "$RPM_MAP_FILE" > "$tmp" 2>/dev/null || : > "$tmp"
+    else
+        : > "$tmp"
+    fi
+    printf '%s %s %s\n' "$fan_id" "$bucket" "$rpm" >> "$tmp"
+    mv "$tmp" "$RPM_MAP_FILE"
+
+    return 0
+}
+
+# 输出某个风扇的「档位 → 最低转速」JSON 数组，例如 [[30,812],[50,1180]]
+# 参数: fan_id
+rpm_table_json() {
+    local fan_id="$1" rows
+
+    if [ -f "$RPM_MAP_FILE" ]; then
+        rows=$(sort -k2,2n "$RPM_MAP_FILE" 2>/dev/null |
+            awk -v fan="$fan_id" '$1 == fan { printf "%s[%d,%d]", (n++ ? "," : ""), $2, $3 }')
+        if [ -n "$rows" ]; then
+            printf '[%s]' "$rows"
+            return 0
+        fi
+    fi
+
+    printf '[]'
+
+    return 0
 }
 
 # 写入重载状态到内存（下次写 state 文件时持久化）
@@ -174,6 +246,19 @@ set fanxpert.performance.temp_max='65'
 set fanxpert.performance.pwm_start='40'
 set fanxpert.performance.pwm_end='100'
 
+set fanxpert.full_speed='curve'
+set fanxpert.full_speed.type='bezier'
+set fanxpert.full_speed.sensor='cpu_temp'
+set fanxpert.full_speed.temp_min='0'
+set fanxpert.full_speed.temp_max='100'
+set fanxpert.full_speed.pwm_start='100'
+set fanxpert.full_speed.pwm_end='100'
+
+set fanxpert.fixed='curve'
+set fanxpert.fixed.type='fixed'
+set fanxpert.fixed.sensor='cpu_temp'
+set fanxpert.fixed.pwm_start='50'
+
 set fanxpert.cpu_temp='sensor'
 set fanxpert.cpu_temp.type='hwmon'
 set fanxpert.cpu_temp.platform='auto'
@@ -188,6 +273,11 @@ set fanxpert.cpu_fan.pwm_min_start='0'
 set fanxpert.cpu_fan.pwm_min_start_source='unknown'
 set fanxpert.cpu_fan.pwm_min_start_timestamp='0'
 set fanxpert.cpu_fan.never_stop='1'
+add_list fanxpert.cpu_fan.sensors='cpu_temp'
+set fanxpert.cpu_fan.quiet_mode='0'
+set fanxpert.cpu_fan.auto_stop='0'
+set fanxpert.cpu_fan.ramp_up_time='30'
+set fanxpert.cpu_fan.ramp_down_time='120'
 
 set fanxpert.custom_cpu_fan='curve'
 set fanxpert.custom_cpu_fan.label='Custom CPU Fan'
@@ -218,15 +308,81 @@ EOF
             field_updated=1
         fi
 
+        # 核心字段也要补齐：旧配置可能由更早的版本生成，缺 curve/pwm_path 等
+        # 会让 LuCI 表单显示为空（守护进程有默认值，所以行为上看不出来）
+        if ! uci -q get "fanxpert.${section}.enabled" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.enabled=1"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.label" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.label=${section}"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.curve" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.curve=standard"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.pwm_path" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.pwm_path=auto"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.pwm_min_start" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.pwm_min_start=0"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.never_stop" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.never_stop=1"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.sensors" >/dev/null 2>&1; then
+            local legacy_curve legacy_sensor
+            legacy_curve=$(uci -q get "fanxpert.${section}.curve") || legacy_curve="standard"
+            legacy_sensor=$(uci -q get "fanxpert.${legacy_curve}.sensor") || legacy_sensor="cpu_temp"
+            uci set "fanxpert.${section}.sensors=${legacy_sensor}"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.quiet_mode" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.quiet_mode=0"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.auto_stop" >/dev/null 2>&1; then
+            local legacy_never_stop
+            legacy_never_stop=$(uci -q get "fanxpert.${section}.never_stop") || legacy_never_stop="1"
+            if [ "$legacy_never_stop" = "1" ]; then
+                uci set "fanxpert.${section}.auto_stop=0"
+            else
+                uci set "fanxpert.${section}.auto_stop=1"
+            fi
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.ramp_up_time" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.ramp_up_time=${RAMP_UP_DEFAULT}"
+            field_updated=1
+        fi
+
+        if ! uci -q get "fanxpert.${section}.ramp_down_time" >/dev/null 2>&1; then
+            uci set "fanxpert.${section}.ramp_down_time=${RAMP_DOWN_DEFAULT}"
+            field_updated=1
+        fi
+
         if [ "$field_updated" -eq 1 ]; then
             log_msg debug "补齐风扇 section ${section} 的元数据字段"
             need_commit=1
         fi
     done
 
-    # 3. 检查预设曲线是否完整
+    # 3. 检查预设曲线是否完整（四档模式：静音 / 标准 / 性能 / 全速）
     local preset
-    for preset in silent standard performance; do
+    for preset in silent standard performance full_speed fixed; do
         if ! uci -q get "fanxpert.${preset}" >/dev/null 2>&1; then
             case "$preset" in
                 silent)
@@ -255,6 +411,25 @@ EOF
                     uci set fanxpert.performance.temp_max='65'
                     uci set fanxpert.performance.pwm_start='40'
                     uci set fanxpert.performance.pwm_end='100'
+                    ;;
+                full_speed)
+                    uci set fanxpert.full_speed='curve'
+                    uci set fanxpert.full_speed.type='bezier'
+                    uci set fanxpert.full_speed.sensor='cpu_temp'
+                    uci set fanxpert.full_speed.temp_min='0'
+                    uci set fanxpert.full_speed.temp_max='100'
+                    uci set fanxpert.full_speed.pwm_start='100'
+                    uci set fanxpert.full_speed.pwm_end='100'
+                    ;;
+                fixed)
+                    uci set fanxpert.fixed='curve'
+                    uci set fanxpert.fixed.type='fixed'
+                    uci set fanxpert.fixed.sensor='cpu_temp'
+                    uci set fanxpert.fixed.pwm_start='50'
+                    ;;
+                *)
+                    log_msg warn "未知预设曲线，跳过: $preset"
+                    continue
                     ;;
             esac
             need_commit=1
@@ -297,7 +472,7 @@ detect_pwm_max() {
     local max_value
 
     if [ -r "$max_path" ]; then
-        max_value=$(cat "$max_path" 2>/dev/null | tr -d ' ')
+        max_value=$(tr -d ' ' < "$max_path" 2>/dev/null)
         if [ -n "$max_value" ] && [ "$max_value" -eq "$max_value" ] 2>/dev/null && [ "$max_value" -gt 0 ]; then
             PWM_MAX="$max_value"
             return 0
@@ -309,7 +484,7 @@ detect_pwm_max() {
 
 load_curve_config() {
     local curve_id="$1"
-    local type sensor temp_min temp_max pwm_start pwm_end
+    local type sensor temp_min temp_max pwm_start pwm_end step_levels
 
     type=$(uci -q get "fanxpert.$curve_id.type") || type="bezier"
     sensor=$(uci -q get "fanxpert.$curve_id.sensor") || return 1
@@ -323,9 +498,29 @@ load_curve_config() {
 
             echo "$type|$sensor|$temp_min|$temp_max|$pwm_start|$pwm_end"
             ;;
-        linear)
-            log_msg warn "Linear 曲线类型暂不支持，使用 bezier 替代"
-            echo "bezier|$sensor|35|75|30|100"
+        fixed)
+            # 固定转速模式：只使用 pwm_start 作为目标转速，温度不参与计算
+            pwm_start=$(uci -q get "fanxpert.$curve_id.pwm_start") || pwm_start=50
+
+            echo "fixed|$sensor|0|100|$pwm_start|$pwm_start"
+            ;;
+        linear|step)
+            # 线性 / 阶梯：与 bezier 使用同一组字段；阶梯另有第 7 个字段（档数）
+            temp_min=$(uci -q get "fanxpert.$curve_id.temp_min") || temp_min=35
+            temp_max=$(uci -q get "fanxpert.$curve_id.temp_max") || temp_max=75
+            pwm_start=$(uci -q get "fanxpert.$curve_id.pwm_start") || pwm_start=30
+            pwm_end=$(uci -q get "fanxpert.$curve_id.pwm_end") || pwm_end=100
+
+            # 档数只对阶梯曲线有意义：仅 step 追加第 7 个字段
+            if [ "$type" = "step" ]; then
+                levels=$(uci -q get "fanxpert.$curve_id.step_levels") || levels="$STEP_LEVELS"
+                levels=$(clamp_step_levels "$levels")
+
+                echo "step|$sensor|$temp_min|$temp_max|$pwm_start|$pwm_end|$levels"
+                return 0
+            fi
+
+            echo "$type|$sensor|$temp_min|$temp_max|$pwm_start|$pwm_end"
             ;;
         *)
             log_msg err "未知的曲线类型: $type"
@@ -396,6 +591,16 @@ reset_curve_to_default() {
             uci set fanxpert.performance.temp_max='65'
             uci set fanxpert.performance.pwm_start='40'
             uci set fanxpert.performance.pwm_end='100'
+            ;;
+        full_speed)
+            uci set fanxpert.full_speed.temp_min='0'
+            uci set fanxpert.full_speed.temp_max='100'
+            uci set fanxpert.full_speed.pwm_start='100'
+            uci set fanxpert.full_speed.pwm_end='100'
+            ;;
+        fixed)
+            uci set fanxpert.fixed.type='fixed'
+            uci set fanxpert.fixed.pwm_start='50'
             ;;
         *)
             log_msg err "无法恢复未知曲线: $curve_id"
@@ -523,6 +728,8 @@ read_temperature() {
     temp=$(cat "${sensor_path}_input" 2>/dev/null) || return 1
 
     # 验证温度值
+    # shellcheck disable=SC2335  # 刻意的写法：依赖 -eq 对非数字报错返回非零来做类型校验，
+    # 改成 [ -ne ] 会让非数字值“比较成功”而被放行，语义相反
     if [ -z "$temp" ] || ! [ "$temp" -eq "$temp" ] 2>/dev/null; then
         return 1
     fi
@@ -530,6 +737,109 @@ read_temperature() {
     # 转换为摄氏度
     echo "$((temp / 1000))"
     return 0
+}
+
+# 解析风扇的温度来源列表（最多 3 个，Fan Xpert 4 的“多测温点”）。
+# 输出 "id:path" 形式，空格分隔；未配置 fan.sensors 时回落到曲线上的 sensor 字段。
+load_sensor_paths() {
+    local fan_id="$1"
+    local ids id path out="" count=0
+    local curve_id sensor_id
+
+    # 调用方（reload_runtime_config / daemon_main_loop）会把 IFS 设成 '|' 用来切分
+    # 配置字段，这里必须显式恢复按空格切分，否则 UCI 列表会被当成一个整体。
+    local IFS=' '
+
+    ids=$(uci -q get "fanxpert.$fan_id.sensors" 2>/dev/null) || ids=""
+
+    if [ -z "$ids" ]; then
+        curve_id=$(uci -q get "fanxpert.$fan_id.curve" 2>/dev/null) || curve_id="standard"
+        sensor_id=$(uci -q get "fanxpert.$curve_id.sensor" 2>/dev/null) || sensor_id="cpu_temp"
+        ids="$sensor_id"
+    fi
+
+    for id in $ids; do
+        [ "$count" -ge 3 ] && break
+
+        path=$(load_sensor_config "$id" 2>/dev/null) || continue
+        [ -n "$path" ] || continue
+
+        out="$out $id:$path"
+        count=$((count + 1))
+    done
+
+    echo "${out# }"
+    return 0
+}
+
+# 读取所有测温点并取最高温（与 Fan Xpert 4 一致）。
+# 结果写入全局变量：TEMP_VALUE / TEMP_SOURCE_PATH / TEMP_SENSOR_JSON。
+read_multi_temperature() {
+    local pairs="$1"
+    local pair id path value
+    local hottest="" hottest_path="" json="" count=0
+
+    local IFS=' '
+
+    for pair in $pairs; do
+        id="${pair%%:*}"
+        path="${pair#*:}"
+        [ -n "$path" ] || continue
+
+        value=$(read_temperature "$path") || continue
+
+        count=$((count + 1))
+        json="$json${json:+,}[\"$(json_escape "$id")\",$value]"
+
+        if [ -z "$hottest" ] || [ "$value" -gt "$hottest" ]; then
+            hottest="$value"
+            hottest_path="$path"
+        fi
+    done
+
+    TEMP_VALUE="$hottest"
+    TEMP_SOURCE_PATH="$hottest_path"
+    TEMP_SENSOR_JSON="$json"
+
+    [ -n "$hottest" ] || return 1
+    return 0
+}
+
+# 多测温点版本的就绪检查：任一测温点可读 + PWM 可写即可
+check_hardware_ready_multi() {
+    local pairs="$1"
+    local pwm_path="$2"
+    local pair path value
+    local waited=0
+
+    local IFS=' '
+
+    while [ "$waited" -lt 30 ]; do
+        for pair in $pairs; do
+            path="${pair#*:}"
+            [ -n "$path" ] || continue
+
+            value=$(read_temperature "$path") || continue
+            [ "$value" -gt 0 ] || continue
+
+            if [ ! -w "$pwm_path" ]; then
+                log_msg debug "等待 PWM 控制器就绪: $pwm_path"
+                sleep 1
+                waited=$((waited + 1))
+                continue 2
+            fi
+
+            log_msg notice "硬件就绪 - 最高温度: ${value}°C, PWM: $pwm_path"
+            return 0
+        done
+
+        log_msg debug "等待测温点就绪"
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    log_msg err "硬件准备超时"
+    return 1
 }
 
 set_pwm() {
@@ -574,6 +884,7 @@ check_hardware_ready() {
         # 测试温度读取
         local test_temp
         test_temp=$(cat "${sensor_path}_input" 2>/dev/null)
+        # shellcheck disable=SC2335  # 同上：用 -eq 报错判定“非数字”
         if [ -z "$test_temp" ] || ! [ "$test_temp" -eq "$test_temp" ] 2>/dev/null || [ "$test_temp" -eq 0 ]; then
             log_msg debug "等待有效温度值: $test_temp"
             sleep 1
@@ -601,7 +912,7 @@ check_hardware_ready() {
 reload_runtime_config() {
     local fan_id="$1"
     local fan_config curve_config new_fan_label new_curve_id new_pwm_path new_pwm_min_start new_never_stop
-    local new_type new_sensor new_temp_min new_temp_max new_pwm_start new_pwm_end new_sensor_path
+    local new_type new_sensor new_temp_min new_temp_max new_pwm_start new_pwm_end new_sensor_path new_sensor_paths
 
     fan_config=$(load_fan_config "$fan_id")
     if [ -z "$fan_config" ]; then
@@ -624,13 +935,16 @@ EOF
 $curve_config
 EOF
 
-    new_sensor_path=$(load_sensor_config "$new_sensor")
-    if [ -z "$new_sensor_path" ]; then
-        log_msg err "配置重载失败: 无法加载传感器配置 $new_sensor"
+    new_sensor_paths=$(load_sensor_paths "$fan_id")
+    if [ -z "$new_sensor_paths" ]; then
+        log_msg err "配置重载失败: 无法加载测温点配置（fan.sensors）"
         return 1
     fi
 
-    if [ ! -r "${new_sensor_path}_input" ] || [ ! -w "$new_pwm_path" ]; then
+    new_sensor_path="${new_sensor_paths%% *}"
+    new_sensor_path="${new_sensor_path#*:}"
+
+    if ! check_hardware_ready_multi "$new_sensor_paths" "$new_pwm_path"; then
         log_msg err "配置重载失败: 硬件路径不可用"
         return 1
     fi
@@ -647,14 +961,184 @@ EOF
     pwm_start=$new_pwm_start
     pwm_end=$new_pwm_end
     sensor_path=$new_sensor_path
+    sensor_paths=$new_sensor_paths
+
+    local new_ramp_config
+    new_ramp_config=$(load_ramp_config "$fan_id")
+    ramp_up_time=${new_ramp_config%%|*}
+    ramp_down_time=${new_ramp_config##*|}
+
+    local new_quiet_config
+    new_quiet_config=$(resolve_quiet_and_stop "$fan_id")
+    quiet_mode=${new_quiet_config%%|*}
+    allow_stop=${new_quiet_config##*|}
 
     enable_manual_control "$pwm_path"
-    log_msg notice "配置已应用 - 风扇: $fan_label, 曲线: $curve_id, PWM: $pwm_path, 传感器: $sensor_path"
+    log_msg notice "配置已应用 - 风扇: $fan_label, 曲线: $curve_id, PWM: $pwm_path, 测温点: $sensor_paths, 升速: ${ramp_up_time}s, 降速: ${ramp_down_time}s, 极致静音: ${quiet_mode}, 自动停转: ${allow_stop}"
     return 0
 }
 
 # CURVE ALGORITHMS
 # ============================================================
+
+# 校准是否可作为「极致静音」的前置条件（Fan Xpert 4：必须先执行风扇校准）
+has_valid_calibration() {
+    local fan_id="$1"
+    local min_start source
+
+    min_start=$(uci -q get "fanxpert.$fan_id.pwm_min_start" 2>/dev/null) || min_start="0"
+    source=$(uci -q get "fanxpert.$fan_id.pwm_min_start_source" 2>/dev/null) || source="unknown"
+
+    case "$min_start" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$min_start" -gt 0 ] || return 1
+
+    case "$source" in
+        measured|estimated) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 读取「自动停转」：优先新字段 auto_stop，缺失时由旧的 never_stop 派生
+load_auto_stop() {
+    local fan_id="$1"
+    local value never
+
+    value=$(uci -q get "fanxpert.$fan_id.auto_stop" 2>/dev/null) || value=""
+
+    if [ -z "$value" ]; then
+        never=$(uci -q get "fanxpert.$fan_id.never_stop" 2>/dev/null) || never="1"
+        [ "$never" = "1" ] && { echo 0; return 0; }
+        echo 1
+        return 0
+    fi
+
+    case "$value" in
+        1) echo 1 ;;
+        *) echo 0 ;;
+    esac
+}
+
+# 解析极致静音与自动停转，输出 "quiet|allow_stop"。
+# 门槛（与 Fan Xpert 4 一致）：极致静音需要先完成校准；自动停转需要极致静音生效。
+resolve_quiet_and_stop() {
+    local fan_id="$1"
+    local quiet auto_stop allow_stop
+
+    quiet=$(uci -q get "fanxpert.$fan_id.quiet_mode" 2>/dev/null) || quiet="0"
+    case "$quiet" in
+        1) quiet=1 ;;
+        *) quiet=0 ;;
+    esac
+
+    if [ "$quiet" = "1" ] && ! has_valid_calibration "$fan_id"; then
+        log_msg warn "极致静音需要先完成风扇校准，已按关闭处理"
+        quiet=0
+    fi
+
+    auto_stop=$(load_auto_stop "$fan_id")
+    allow_stop=0
+
+    if [ "$auto_stop" = "1" ]; then
+        if [ "$quiet" = "1" ]; then
+            allow_stop=1
+        else
+            log_msg warn "自动停转需要先开启极致静音（且完成校准），已忽略"
+        fi
+    fi
+
+    echo "$quiet|$allow_stop"
+}
+
+# 应用最小启动阈值：
+#   - 未启用自动停转：目标低于校准起点时抬到起点（保证风扇能转）
+#   - 已启用自动停转：目标低于起点时输出 0，让风扇明确静止
+apply_min_start_floor() {
+    local target="$1"
+    local min_start="$2"
+    local allow_stop="$3"
+
+    case "$target" in ''|*[!0-9]*) target=0 ;; esac
+    case "$min_start" in ''|*[!0-9]*) min_start=0 ;; esac
+
+    if [ "$min_start" -gt 0 ] && [ "$target" -gt 0 ] && [ "$target" -lt "$min_start" ]; then
+        if [ "$allow_stop" = "1" ]; then
+            echo 0
+            return 0
+        fi
+
+        echo "$min_start"
+        return 0
+    fi
+
+    echo "$target"
+}
+
+# 极致静音偏置：整体下调 QUIET_MODE_OFFSET%，quiet 不为 1 时原样返回
+apply_quiet_bias() {
+    local target_pwm="$1"
+    local quiet="$2"
+
+    case "$target_pwm" in ''|*[!0-9]*) target_pwm=0 ;; esac
+
+    [ "$quiet" = "1" ] || { echo "$target_pwm"; return 0; }
+
+    echo $(( target_pwm - target_pwm * QUIET_MODE_OFFSET / 100 ))
+}
+
+# 按升速/降速时间限制单个采样周期（1 秒）内的 PWM 变化量。
+# 参数: 当前 PWM, 目标 PWM, 升速时间(秒), 降速时间(秒)
+# 语义: 时间 = 从最低转速变到最高转速所需的秒数；0 = 不限制。
+# 步长按当前 PWM_MAX 换算，因此不限制范围的硬件也能正确缩放。
+ramp_limited_pwm() {
+    local current="$1"
+    local target="$2"
+    local up_time="$3"
+    local down_time="$4"
+    local step span
+
+    case "$up_time" in ''|*[!0-9]*) up_time=0 ;; esac
+    case "$down_time" in ''|*[!0-9]*) down_time=0 ;; esac
+
+    span=$(( PWM_MAX - PWM_MIN ))
+    [ "$span" -lt 1 ] && span=1
+
+    if [ "$target" -gt "$current" ]; then
+        [ "$up_time" -eq 0 ] && { echo "$target"; return 0; }
+
+        # 向上取整：实际用时不会超过设定值
+        step=$(( (span + up_time - 1) / up_time ))
+        [ "$step" -lt 1 ] && step=1
+
+        [ $((current + step)) -ge "$target" ] && { echo "$target"; return 0; }
+        echo $((current + step))
+    elif [ "$target" -lt "$current" ]; then
+        [ "$down_time" -eq 0 ] && { echo "$target"; return 0; }
+
+        step=$(( (span + down_time - 1) / down_time ))
+        [ "$step" -lt 1 ] && step=1
+
+        [ $((current - step)) -le "$target" ] && { echo "$target"; return 0; }
+        echo $((current - step))
+    else
+        echo "$current"
+    fi
+
+    return 0
+}
+
+# 读取风扇的升速/降速时间，输出 "up|down"
+load_ramp_config() {
+    local fan_id="$1"
+    local up down
+
+    up=$(uci -q get "fanxpert.$fan_id.ramp_up_time" 2>/dev/null) || up=""
+    down=$(uci -q get "fanxpert.$fan_id.ramp_down_time" 2>/dev/null) || down=""
+
+    case "$up" in ''|*[!0-9]*) up="$RAMP_UP_DEFAULT" ;; esac
+    case "$down" in ''|*[!0-9]*) down="$RAMP_DOWN_DEFAULT" ;; esac
+
+    echo "$up|$down"
+}
 
 percent_to_pwm() {
     local percent="$1"
@@ -668,6 +1152,72 @@ pwm_to_percent() {
     [ "$pwm" -lt "$PWM_MIN" ] && pwm=$PWM_MIN
     [ "$pwm" -gt "$PWM_MAX" ] && pwm=$PWM_MAX
     echo "$(( (pwm - PWM_MIN) * 100 / (PWM_MAX - PWM_MIN) ))"
+}
+
+# 阶梯档数钳位到 [STEP_LEVELS_MIN, STEP_LEVELS_MAX]，非法值回落默认
+clamp_step_levels() {
+    case "$1" in
+        ''|*[!0-9]*) echo "$STEP_LEVELS"; return ;;
+    esac
+
+    if [ "$1" -lt "$STEP_LEVELS_MIN" ]; then
+        echo "$STEP_LEVELS_MIN"
+    elif [ "$1" -gt "$STEP_LEVELS_MAX" ]; then
+        echo "$STEP_LEVELS_MAX"
+    else
+        echo "$1"
+    fi
+}
+
+# 线性插值：两点之间按温度线性过渡（返回 PWM）
+calculate_linear_curve() {
+    local temp="$1"
+    local temp_min="$2"
+    local temp_max="$3"
+    local pwm_start="$4"
+    local pwm_end="$5"
+
+    if [ "$temp" -le "$temp_min" ]; then
+        percent_to_pwm "$pwm_start"
+        return
+    fi
+
+    if [ "$temp" -ge "$temp_max" ]; then
+        percent_to_pwm "$pwm_end"
+        return
+    fi
+
+    local percent
+    percent=$(( pwm_start + (pwm_end - pwm_start) * (temp - temp_min) / (temp_max - temp_min) ))
+    percent_to_pwm "$percent"
+}
+
+# 阶梯曲线：温度区间等分为 STEP_LEVELS 档，逐档抬升（返回 PWM）
+# 相比线性/贝塞尔，转速只在档位边界变化，避免在某个温度附近持续微调
+calculate_step_curve() {
+    local temp="$1"
+    local temp_min="$2"
+    local temp_max="$3"
+    local pwm_start="$4"
+    local pwm_end="$5"
+    local levels="${6:-$STEP_LEVELS}"
+
+    if [ "$temp" -le "$temp_min" ]; then
+        percent_to_pwm "$pwm_start"
+        return
+    fi
+
+    if [ "$temp" -ge "$temp_max" ]; then
+        percent_to_pwm "$pwm_end"
+        return
+    fi
+
+    levels=$(clamp_step_levels "$levels")
+
+    local band percent
+    band=$(( (temp - temp_min) * levels / (temp_max - temp_min) + 1 ))
+    percent=$(( pwm_start + (pwm_end - pwm_start) * band / levels ))
+    percent_to_pwm "$percent"
 }
 
 calculate_bezier_curve() {
@@ -687,6 +1237,13 @@ calculate_bezier_curve() {
     # 如果温度高于最高阈值，使用最高转速
     if [ "$temp" -ge "$temp_max" ]; then
         percent_to_pwm "$pwm_end"
+        return
+    fi
+
+    # 起止转速相同（例如全速档 100/100）时直接输出固定转速，
+    # 否则贝塞尔控制点会在中段产生 97~100% 的塌陷。
+    if [ "$pwm_start" -eq "$pwm_end" ]; then
+        percent_to_pwm "$pwm_start"
         return
     fi
 
@@ -717,11 +1274,21 @@ calculate_bezier_curve() {
 generate_curve_points() {
     local curve_config="$1"
     local IFS='|'
-    local type sensor temp_min temp_max pwm_start pwm_end
+    local type sensor temp_min temp_max pwm_start pwm_end step_levels
 
-    read -r type sensor temp_min temp_max pwm_start pwm_end <<EOF
+    read -r type sensor temp_min temp_max pwm_start pwm_end step_levels <<EOF
 $curve_config
 EOF
+
+    # 固定转速模式：输出一条水平线
+    if [ "$type" = "fixed" ]; then
+        local fixed_percent fixed_points
+        fixed_percent=$(pwm_to_percent "$(percent_to_pwm "$pwm_start")")
+        fixed_points="[[$temp_min,$fixed_percent],[$temp_max,$fixed_percent]]"
+
+        echo "$fixed_points"
+        return 0
+    fi
 
     # 生成 20 个点用于绘图
     local step
@@ -735,7 +1302,17 @@ EOF
     while [ "$temp" -le "$temp_max" ]; do
         local pwm
         local percent
-        pwm=$(calculate_bezier_curve "$temp" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end")
+        case "$type" in
+            linear)
+                pwm=$(calculate_linear_curve "$temp" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end")
+                ;;
+            step)
+                pwm=$(calculate_step_curve "$temp" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end" "$step_levels")
+                ;;
+            *)
+                pwm=$(calculate_bezier_curve "$temp" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end")
+                ;;
+        esac
         percent=$(pwm_to_percent "$pwm")
 
         [ "$first" -eq 0 ] && points="${points},"
@@ -784,10 +1361,12 @@ write_state_file() {
     local pwm="$4"
     local curve_id="$5"
     local sensor_path="$6"
+    local pwm_path="$7"
+    local sensors_json="${8:-[]}"
     local current_time
 
     local percent current_time uptime fan_label_json curve_id_json sensor_path_json
-    local error_json payload
+    local error_json payload rpm rpm_json
     case "$temp" in
         ''|*[!0-9]*) temp=0 ;;
     esac
@@ -811,6 +1390,19 @@ write_state_file() {
     curve_id_json=$(json_escape "$curve_id")
     sensor_path_json=$(json_escape "$sensor_path")
 
+    # 读取转速（无转速传感器时输出空，JSON 里写 null）
+    rpm=""
+    [ -n "$pwm_path" ] && rpm=$(read_fan_rpm "$pwm_path" 2>/dev/null || echo "")
+    case "$rpm" in
+        ''|*[!0-9]*) rpm="" ;;
+    esac
+    if [ -n "$rpm" ] && [ "$rpm" -gt 0 ]; then
+        rpm_json="$rpm"
+        record_rpm_sample "$fan_id" "$percent" "$rpm"
+    else
+        rpm_json="null"
+    fi
+
     # 计算统计信息
     if [ ! -f "$STATE_FILE" ] || [ -z "${MAX_TEMP:-}" ]; then
         MAX_TEMP=$temp
@@ -829,8 +1421,10 @@ write_state_file() {
       "temp": $temp,
       "pwm": $pwm,
       "percent": $percent,
+      "rpm": $rpm_json,
       "curve": "$curve_id_json",
-      "sensor_path": "$sensor_path_json"
+      "sensor_path": "$sensor_path_json",
+      "sensors": $sensors_json
     }
   },
   "daemon": {
@@ -911,8 +1505,9 @@ daemon_main_loop() {
         exit 1
     fi
 
+    # 注意：以下运行期参数必须是全局变量。reload_runtime_config() 在热重载时
+    # 直接给同名变量赋值，若在此声明 local 会遮蔽全局变量，热重载将静默失效。
     local IFS='|'
-    local fan_label curve_id pwm_path pwm_min_start never_stop
     read -r fan_label curve_id pwm_path pwm_min_start never_stop <<EOF
 $fan_config
 EOF
@@ -927,23 +1522,38 @@ EOF
         exit 1
     fi
 
-    local type sensor temp_min temp_max pwm_start pwm_end
-    read -r type sensor temp_min temp_max pwm_start pwm_end <<EOF
+    read -r type sensor temp_min temp_max pwm_start pwm_end step_levels <<EOF
 $curve_config
 EOF
 
-    # 加载传感器配置
-    local sensor_path
-    sensor_path=$(load_sensor_config "$sensor")
-    if [ -z "$sensor_path" ]; then
-        log_msg err "无法加载传感器配置: $sensor"
+    # 加载测温点列表（最多 3 个，同为运行期全局变量，热重载会更新它）
+    sensor_paths=$(load_sensor_paths "$fan_id")
+    if [ -z "$sensor_paths" ]; then
+        log_msg err "无法加载测温点配置: $fan_id.sensors"
         exit 1
     fi
 
-    log_msg notice "传感器: $sensor_path, 曲线类型: $type"
+    sensor_path="${sensor_paths%% *}"
+    sensor_path="${sensor_path#*:}"
+
+    log_msg notice "测温点: $sensor_paths（取最高温）, 曲线类型: $type"
+
+    # 升速/降速时间（秒，0 = 不限制）
+    local ramp_config
+    ramp_config=$(load_ramp_config "$fan_id")
+    ramp_up_time=${ramp_config%%|*}
+    ramp_down_time=${ramp_config##*|}
+    log_msg notice "升速/降速时间: ${ramp_up_time}s / ${ramp_down_time}s"
+
+    # 极致静音 / 自动停转（以校准为前置条件）
+    local quiet_config
+    quiet_config=$(resolve_quiet_and_stop "$fan_id")
+    quiet_mode=${quiet_config%%|*}
+    allow_stop=${quiet_config##*|}
+    log_msg notice "极致静音: ${quiet_mode}, 自动停转: ${allow_stop}"
 
     # 检查硬件就绪
-    if ! check_hardware_ready "$sensor_path" "$pwm_path"; then
+    if ! check_hardware_ready_multi "$sensor_paths" "$pwm_path"; then
         log_msg err "硬件未就绪"
         exit 1
     fi
@@ -958,7 +1568,6 @@ EOF
     local current_pwm
     current_pwm=$(percent_to_pwm "$pwm_start")
     local target_pwm="$current_pwm"
-    local step_size=2
     local last_log_time=0
     local debug_log_interval=300
 
@@ -986,10 +1595,10 @@ EOF
         fi
 
         # 读取温度
+        # 多测温点：读取所有来源并取最高温
         local temp_c
-        temp_c=$(read_temperature "$sensor_path")
-        if [ -z "$temp_c" ]; then
-            log_msg err "无法读取温度"
+        if ! read_multi_temperature "$sensor_paths"; then
+            log_msg err "无法读取任何测温点"
             if ! check_error_threshold; then
                 log_msg err "错误次数超过阈值，退出"
                 exit 1
@@ -998,11 +1607,27 @@ EOF
             continue
         fi
 
+        temp_c="$TEMP_VALUE"
+        sensor_path="$TEMP_SOURCE_PATH"
+
         # 重置错误计数
         ERROR_COUNT=0
 
-        # 根据温度计算目标 PWM 值
-        target_pwm=$(calculate_bezier_curve "$temp_c" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end")
+        # 计算目标 PWM：固定转速模式直接输出设定值，其余曲线按温度插值
+        case "$type" in
+            fixed)
+                target_pwm=$(percent_to_pwm "$pwm_start")
+                ;;
+            linear)
+                target_pwm=$(calculate_linear_curve "$temp_c" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end")
+                ;;
+            step)
+                target_pwm=$(calculate_step_curve "$temp_c" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end" "$step_levels")
+                ;;
+            *)
+                target_pwm=$(calculate_bezier_curve "$temp_c" "$temp_min" "$temp_max" "$pwm_start" "$pwm_end")
+                ;;
+        esac
 
         # pwm_min_start 在 UCI/UI 中以百分比保存，写入硬件前转换为原始 PWM。
         local min_start_pwm=0
@@ -1010,21 +1635,14 @@ EOF
             min_start_pwm=$(percent_to_pwm "$pwm_min_start")
         fi
 
-        # 应用最小启动阈值
-        if [ "$min_start_pwm" -gt 0 ] && [ "$target_pwm" -gt 0 ] && [ "$target_pwm" -lt "$min_start_pwm" ]; then
-            if [ "$never_stop" = "1" ]; then
-                target_pwm=$min_start_pwm
-            fi
-        fi
+        # 极致静音：整体下调转速，但不低于校准得到的最低可用转速
+        target_pwm=$(apply_quiet_bias "$target_pwm" "$quiet_mode")
 
-        # 平滑过渡
-        if [ "$current_pwm" -lt "$target_pwm" ]; then
-            current_pwm=$((current_pwm + step_size))
-            [ "$current_pwm" -gt "$target_pwm" ] && current_pwm=$target_pwm
-        elif [ "$current_pwm" -gt "$target_pwm" ]; then
-            current_pwm=$((current_pwm - step_size))
-            [ "$current_pwm" -lt "$target_pwm" ] && current_pwm=$target_pwm
-        fi
+        # 应用最小启动阈值（自动停转生效时允许降到 0）
+        target_pwm=$(apply_min_start_floor "$target_pwm" "$min_start_pwm" "$allow_stop")
+
+        # 平滑过渡：按升速/降速时间限制每秒的变化量（0 = 不限制）
+        current_pwm=$(ramp_limited_pwm "$current_pwm" "$target_pwm" "$ramp_up_time" "$ramp_down_time")
 
         # 确保 PWM 值在有效范围内
         [ "$current_pwm" -lt "$PWM_MIN" ] && current_pwm=$PWM_MIN
@@ -1040,7 +1658,7 @@ EOF
         fi
 
         # 写入状态文件
-        write_state_file "$fan_id" "$fan_label" "$temp_c" "$current_pwm" "$curve_id" "$sensor_path"
+        write_state_file "$fan_id" "$fan_label" "$temp_c" "$current_pwm" "$curve_id" "$sensor_path" "$pwm_path" "[$TEMP_SENSOR_JSON]"
 
         # 写入 PWM 值
         if ! set_pwm "$pwm_path" "$current_pwm"; then
@@ -1134,14 +1752,75 @@ cmd_status() {
         echo "PID: $pid"
         if [ -f "$STATE_FILE" ]; then
             local uptime
-            uptime=$(grep -o '"uptime":[0-9]*' "$STATE_FILE" | cut -d: -f2)
+            # 状态文件是 "uptime": 123 这种带空格的格式，必须容忍空格，
+            # 否则这里取不到值会让整个函数返回非 0，前端就会把运行中的服务判成已停止。
+            uptime=$(sed -n 's/.*"uptime"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$STATE_FILE" | head -1)
             [ -n "$uptime" ] && echo "Uptime: ${uptime}s"
         fi
+
+        return 0
     else
         echo "Status: stopped (stale PID file)"
         rm -f "$PID_FILE"
         return 1
     fi
+}
+
+# 读取系统日志里的 FANXPERT 行（优先 logread，其次 /var/log/messages）
+read_fanxpert_log() {
+    local lines="$1"
+    local out=""
+
+    if command -v logread >/dev/null 2>&1; then
+        out=$(logread 2>/dev/null | grep -F "FANXPERT:" | tail -n "$lines")
+    fi
+
+    if [ -z "$out" ] && [ -f /var/log/messages ]; then
+        out=$(grep -F "FANXPERT:" /var/log/messages 2>/dev/null | tail -n "$lines")
+    fi
+
+    printf '%s' "$out"
+}
+
+# 多行日志 → JSON 字符串数组
+log_lines_json() {
+    local raw="$1"
+    local json="" line
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        json="$json${json:+,}\"$(json_escape "$line")\""
+    done <<EOF
+$raw
+EOF
+
+    printf '%s' "$json"
+}
+
+# 输出最近日志（JSON），供 LuCI 日志页面使用
+cmd_logs() {
+    local lines="${1:-100}"
+    local raw count
+
+    case "$lines" in
+        ''|*[!0-9]*) lines=100 ;;
+    esac
+    [ "$lines" -gt 0 ] || lines=100
+    [ "$lines" -gt 1000 ] && lines=1000
+
+    raw=$(read_fanxpert_log "$lines")
+
+    if [ -z "$raw" ]; then
+        printf '{"ok":true,"lines":[],"count":0,"log_level":"%s"}\n' "$(json_escape "${LOG_LEVEL:-info}")"
+        return 0
+    fi
+
+    count=$(printf '%s\n' "$raw" | grep -c .)
+
+    printf '{"ok":true,"lines":[%s],"count":%s,"log_level":"%s"}\n' \
+        "$(log_lines_json "$raw")" "$count" "$(json_escape "${LOG_LEVEL:-info}")"
+
+    return 0
 }
 
 cmd_info() {
@@ -1190,8 +1869,8 @@ EOF
         return 1
     fi
 
-    local type sensor temp_min temp_max pwm_start pwm_end
-    read -r type sensor temp_min temp_max pwm_start pwm_end <<EOF
+    local type sensor temp_min temp_max pwm_start pwm_end step_levels
+    read -r type sensor temp_min temp_max pwm_start pwm_end step_levels <<EOF
 $curve_config
 EOF
 
@@ -1228,9 +1907,56 @@ EOF
     "temp_max": $range_temp_max,
     "pwm_min": 0,
     "pwm_max": 100
-  }
+  },
+  "pwm_max": ${PWM_MAX:-255},
+  "rpm_table": $(rpm_table_json "$fan_id")
 }
 EOF
+}
+
+# 四档预设模式：一键套用到所有风扇（对应 Fan Xpert 4 的预设模式）
+# 参数: mode = silent | standard | performance | full_speed
+cmd_preset() {
+    local mode="$1"
+    local fan_sections fan_id applied="" applied_json
+
+    case "$mode" in
+        silent|standard|performance|full_speed|fixed) ;;
+        *)
+            printf '{"error":"Invalid preset mode"}\n'
+            return 1
+            ;;
+    esac
+
+    # 预设曲线可能因旧版本升级而缺失，先补齐再套用
+    ensure_uci_config
+
+    fan_sections=$(uci -q show fanxpert 2>/dev/null | sed -n 's/^fanxpert\.\([^.=]*\)=fan$/\1/p')
+
+    if [ -z "$fan_sections" ]; then
+        printf '{"error":"No fan section found"}\n'
+        return 1
+    fi
+
+    for fan_id in $fan_sections; do
+        uci set "fanxpert.${fan_id}.curve=${mode}"
+        applied="${applied}${applied:+,}\"$(json_escape "$fan_id")\""
+    done
+
+    uci commit fanxpert
+    applied_json="[$applied]"
+
+    log_msg notice "预设模式已切换为 ${mode}（风扇: $(echo "$fan_sections" | tr '\n' ' ')）"
+
+    # 运行中则通知守护进程立即应用，不必重启服务
+    if [ -f "$PID_FILE" ]; then
+        touch "$RELOAD_FLAG"
+        log_msg notice "Configuration reload requested"
+    fi
+
+    printf '{"ok":true,"mode":"%s","fans":%s}\n' "$(json_escape "$mode")" "$applied_json"
+
+    return 0
 }
 
 cmd_reset_curve() {
@@ -1357,6 +2083,10 @@ update_calibrate_progress() {
             ;;
         failed)
             status="failed"
+            ;;
+        *)
+            # 其余阶段（started/coarse/fine 等）继续表示“进行中”
+            status="running"
             ;;
     esac
 
@@ -1626,7 +2356,9 @@ FanXpert - 高级风扇控制
   reload               重新加载配置（不重启进程）
   status               显示运行状态
   info [fan]           显示实时数据（JSON 格式，可指定风扇）
+  logs [lines]         显示最近日志（JSON 格式，默认 100 行）
   curve-data [fan]     显示曲线数据（JSON 格式）
+  preset <mode>        套用预设模式到所有风扇（silent|standard|performance|full_speed）
   reset-curve <id>     恢复曲线为默认值
   calibrate [fan]      校准风扇启动阈值
   calibrate-progress   查看校准进度
@@ -1634,6 +2366,8 @@ FanXpert - 高级风扇控制
 示例:
   fanxpert start
   fanxpert info
+  fanxpert logs 200
+  fanxpert preset silent
   fanxpert reset-curve standard
   fanxpert curve-data cpu_fan
   fanxpert calibrate cpu_fan
@@ -1669,11 +2403,17 @@ case "$1" in
     info)
         cmd_info "$2"
         ;;
+    logs)
+        cmd_logs "$2"
+        ;;
     curve-data)
         cmd_curve_data "$2"
         ;;
     reset-curve)
         cmd_reset_curve "$2"
+        ;;
+    preset)
+        cmd_preset "$2"
         ;;
     calibrate)
         cmd_calibrate "$2"
