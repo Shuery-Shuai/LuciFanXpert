@@ -209,6 +209,13 @@ jobs:
           echo "CONFIG_PACKAGE_${PACKAGE_NAME}=m" >> .config
           make defconfig
 
+      # Packaging self-check (source side): shipped scripts must be executable.
+      # Regression guard for the alpha2 incident where /etc/init.d/fanxpert shipped
+      # as 0644, making postinst `enable`/`start` fail and leaving the fan
+      # uncontrolled after reboot.
+      - name: Verify packaged file modes (source)
+        run: sh tools/package-check.sh
+
       # Compile the package (and its language packs) with verbose output
       - name: Build package
         working-directory: ${{ steps.extract.outputs.sdk_dir }}
@@ -247,6 +254,26 @@ jobs:
           # Generate checksums for all collected packages
           (cd "${out_dir}" && sha256sum *.*pk > SHA256SUMS)
           echo "dist=${out_dir}" >> "$GITHUB_OUTPUT"
+
+      # Packaging self-check (artifact side): inspect the built packages and assert
+      # the init/sbin scripts really carry the executable bit inside them.
+      - name: Verify artifact file modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+
+          for artifact in dist/*.ipk dist/*.apk; do
+            [ -e "$artifact" ] || continue
+            found=1
+            echo "==> checking $artifact"
+            PKG_ARTIFACT="$artifact" sh tools/package-check.sh
+          done
+
+          if [ "$found" -eq 0 ]; then
+            echo "no .ipk/.apk artifact found to verify" >&2
+            exit 1
+          fi
 
       # Upload everything as a workflow artifact for later release
       - name: Upload build artifact

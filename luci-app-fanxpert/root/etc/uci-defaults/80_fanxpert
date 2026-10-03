@@ -1,4 +1,25 @@
 #!/bin/sh
+
+# 配置文件缺失时 uci set/commit 会直接报 "Entry not found" 并放弃写入，
+# 因此必须先保证 /etc/config/fanxpert 存在。
+[ -f /etc/config/fanxpert ] || touch /etc/config/fanxpert
+
+# ============================================================================
+# 自愈：补回脚本可执行位
+# ----------------------------------------------------------------------------
+# 背景：v0.1.0_alpha2 的发布包里 /etc/init.d/fanxpert 与 /usr/sbin/fanxpert.sh
+# 权限是 0644，导致 postinst 的 `"$i" enable` / `"$i" start` 报 Permission denied，
+# 服务既没启用也没启动 —— 重启后风扇完全失控。
+#
+# 安装流程里本脚本由 default_postinst 通过 `. "$i"`（source）执行，**不需要可执行位**，
+# 且执行时机早于 enable/start（见 /lib/functions.sh 的 uci-defaults 循环与随后的
+# "$i" enable / "$i" start）。因此在这里补 chmod 能让坏包在安装阶段自我修复。
+# ============================================================================
+chmod 755 /etc/init.d/fanxpert 2>/dev/null || true
+chmod 755 /usr/sbin/fanxpert.sh 2>/dev/null || true
+chmod 644 /usr/share/rpcd/ucode/fanxpert 2>/dev/null || true
+
+
 uci -q get fanxpert.settings >/dev/null 2>&1 && exit 0
 
 uci -q batch <<'EOF'
@@ -30,6 +51,19 @@ set fanxpert.performance.temp_max='65'
 set fanxpert.performance.pwm_start='40'
 set fanxpert.performance.pwm_end='100'
 
+set fanxpert.full_speed='curve'
+set fanxpert.full_speed.type='bezier'
+set fanxpert.full_speed.sensor='cpu_temp'
+set fanxpert.full_speed.temp_min='0'
+set fanxpert.full_speed.temp_max='100'
+set fanxpert.full_speed.pwm_start='100'
+set fanxpert.full_speed.pwm_end='100'
+
+set fanxpert.fixed='curve'
+set fanxpert.fixed.type='fixed'
+set fanxpert.fixed.sensor='cpu_temp'
+set fanxpert.fixed.pwm_start='50'
+
 set fanxpert.cpu_temp='sensor'
 set fanxpert.cpu_temp.type='hwmon'
 set fanxpert.cpu_temp.platform='auto'
@@ -37,6 +71,7 @@ set fanxpert.cpu_temp.label='CPU Temperature'
 
 set fanxpert.cpu_fan='fan'
 set fanxpert.cpu_fan.enabled='1'
+add_list fanxpert.cpu_fan.sensors='cpu_temp'
 set fanxpert.cpu_fan.label='CPU Fan'
 set fanxpert.cpu_fan.curve='standard'
 set fanxpert.cpu_fan.pwm_path='auto'
@@ -44,5 +79,9 @@ set fanxpert.cpu_fan.pwm_min_start='0'
 set fanxpert.cpu_fan.pwm_min_start_source='unknown'
 set fanxpert.cpu_fan.pwm_min_start_timestamp='0'
 set fanxpert.cpu_fan.never_stop='1'
+set fanxpert.cpu_fan.quiet_mode='0'
+set fanxpert.cpu_fan.auto_stop='0'
+set fanxpert.cpu_fan.ramp_up_time='30'
+set fanxpert.cpu_fan.ramp_down_time='120'
 EOF
-uci commit fanxpert
+uci -q commit fanxpert
