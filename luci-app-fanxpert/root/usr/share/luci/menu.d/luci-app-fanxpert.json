@@ -1,13 +1,53 @@
 {
-	"admin/system/fanxpert": {
+	"admin/system/fanxpert/": {
 		"title": "FanXpert",
 		"order": 60,
 		"action": {
-			"type": "view",
-			"path": "fanxpert"
+			"type": "firstchild"
 		},
 		"depends": {
-			"acl": [ "luci-app-fanxpert" ]
+			"acl": [
+				"luci-app-fanxpert"
+			]
+		}
+	},
+	"admin/system/fanxpert/overview": {
+		"title": "Overview",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "fanxpert/overview"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-fanxpert"
+			]
+		}
+	},
+	"admin/system/fanxpert/config": {
+		"title": "Configuration",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "fanxpert/config"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-fanxpert"
+			]
+		}
+	},
+	"admin/system/fanxpert/logs": {
+		"title": "Logs",
+		"order": 3,
+		"action": {
+			"type": "view",
+			"path": "fanxpert/logs"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-fanxpert"
+			]
 		}
 	}
 }

@@ -7,6 +7,7 @@ let fs = require('fs');
 const FANXPERT = '/usr/sbin/fanxpert.sh';
 const INIT = '/etc/init.d/fanxpert';
 const FAN_ID_RE = /^[A-Za-z0-9_]+$/;
+const PRESET_MODES = { silent: true, standard: true, performance: true, full_speed: true, fixed: true };
 
 function shquote(s) {
 	return "'" + replace(s ?? '', /'/g, "'\\''") + "'";
@@ -93,6 +94,28 @@ function calibrate(req) {
 	return parse_json_output(run(FANXPERT + ' calibrate ' + shquote(fan)));
 }
 
+// 四档预设模式：把指定模式套用到所有风扇
+function preset(req) {
+	req = request_args(req);
+	let mode = req.mode || '';
+
+	if (!PRESET_MODES[mode])
+		return { ok: false, error: 'Invalid preset mode' };
+
+	return parse_json_output(run(FANXPERT + ' preset ' + shquote(mode)));
+}
+
+// 读取最近的 FANXPERT 日志（供日志页面使用）
+function logs(req) {
+	req = request_args(req);
+	let lines = req.lines ?? '100';
+
+	if (!match(lines, /^[0-9]{1,4}$/))
+		return { ok: false, error: 'Invalid line count' };
+
+	return parse_json_output(run(FANXPERT + ' logs ' + shquote(lines)));
+}
+
 function calibrate_progress() {
 	return parse_json_output(run(FANXPERT + ' calibrate-progress'));
 }
@@ -103,6 +126,8 @@ return {
 		curve_data: { args: { fan: '' }, call: curve_data },
 		calibrate: { args: { fan: '' }, call: calibrate },
 		calibrate_progress: { call: function(req) { return calibrate_progress(); } },
+		logs: { args: { lines: '' }, call: logs },
+		preset: { args: { mode: '' }, call: preset },
 		reload: { call: function(req) { return service_action('reload'); } },
 		start: { call: function(req) { return service_action('start'); } },
 		stop: { call: function(req) { return service_action('stop'); } },

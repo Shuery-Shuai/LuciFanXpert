@@ -12,9 +12,6 @@ msgstr ""
 msgid "FanXpert"
 msgstr ""
 
-msgid "Configuration"
-msgstr ""
-
 msgid "Advanced fan speed control based on temperature sensors"
 msgstr ""
 
@@ -60,25 +57,7 @@ msgstr ""
 msgid "Label"
 msgstr ""
 
-msgid "Fan Curve"
-msgstr ""
-
-msgid "Current Status"
-msgstr ""
-
 msgid "Control Mode"
-msgstr ""
-
-msgid "Silent"
-msgstr ""
-
-msgid "Standard"
-msgstr ""
-
-msgid "Performance"
-msgstr ""
-
-msgid "Custom"
 msgstr ""
 
 msgid "Preset Curves"
@@ -99,12 +78,6 @@ msgstr ""
 msgid "Max Speed (%)"
 msgstr ""
 
-msgid "Reset to Default"
-msgstr ""
-
-msgid "Reset"
-msgstr ""
-
 msgid "Custom Curve"
 msgstr ""
 
@@ -117,28 +90,10 @@ msgstr ""
 msgid "Name"
 msgstr ""
 
-msgid "Sensor"
-msgstr ""
-
-msgid "CPU Temperature"
-msgstr ""
-
-msgid "Advanced Settings"
-msgstr ""
-
 msgid "Fan Start Threshold (%)"
 msgstr ""
 
 msgid "Minimum PWM percentage to start the fan (0-100%)"
-msgstr ""
-
-msgid "Auto Calibration"
-msgstr ""
-
-msgid "Never Stop"
-msgstr ""
-
-msgid "Keep fan running at minimum speed instead of stopping"
 msgstr ""
 
 msgid "PWM Controller"
@@ -147,22 +102,13 @@ msgstr ""
 msgid "Auto Detect"
 msgstr ""
 
-msgid "Leave as 'auto' for automatic detection"
-msgstr ""
-
 msgid "Leave as auto for automatic detection"
-msgstr ""
-
-msgid "Sensor Path"
 msgstr ""
 
 msgid "Temperature"
 msgstr ""
 
 msgid "Fan Speed"
-msgstr ""
-
-msgid "Curve Mode"
 msgstr ""
 
 msgid "Uptime"
@@ -180,40 +126,13 @@ msgstr ""
 msgid "Restart Service"
 msgstr ""
 
-msgid "Service not running"
-msgstr ""
-
-msgid "Loading..."
-msgstr ""
-
 msgid "No RPM sensor detected, value is estimated. Please verify manually."
 msgstr ""
 
 msgid "Start Calibration"
 msgstr ""
 
-msgid "Stop service before calibration"
-msgstr ""
-
 msgid "Calibration started"
-msgstr ""
-
-msgid "Calibrating..."
-msgstr ""
-
-msgid "Failed to start"
-msgstr ""
-
-msgid "Calibration not running"
-msgstr ""
-
-msgid "Calibration complete"
-msgstr ""
-
-msgid "Start threshold"
-msgstr ""
-
-msgid "Calibration failed"
 msgstr ""
 
 msgid "Measured (verified)"
@@ -255,5 +174,293 @@ msgstr ""
 msgid "Verified with RPM feedback"
 msgstr ""
 
-msgid "Stable RPM: "
+msgid "Stable RPM: %s"
+msgstr ""
+
+msgid "Peak: %s"
+msgstr ""
+
+msgid "Reloads: %s"
+msgstr ""
+
+msgid "Service running"
+msgstr ""
+
+msgid "Service stopped"
+msgstr ""
+
+msgid "Stop the service before calibration"
+msgstr ""
+
+msgid "Loading…"
+msgstr ""
+
+msgid "Status and Control"
+msgstr ""
+
+msgid "Control Curve"
+msgstr ""
+
+msgid "Temperature / Fan Speed Curve"
+msgstr ""
+
+msgid "Temperature Range"
+msgstr ""
+
+msgid "Speed Range"
+msgstr ""
+
+msgid "Operating Point"
+msgstr ""
+
+msgid "Fan Start Threshold Calibration"
+msgstr ""
+
+msgid "Detects the lowest PWM value that reliably starts the fan and stores it in the configuration. The service must be stopped."
+msgstr ""
+
+msgid "No RPM data (no sensor, or not sampled yet)"
+msgstr ""
+
+msgid "Power"
+msgstr ""
+
+msgid "Minimum RPM"
+msgstr ""
+
+msgid "Power → Minimum RPM"
+msgstr ""
+
+msgid "Lowest RPM observed per power step since the service started."
+msgstr ""
+
+msgid "Mode applied: %s"
+msgstr ""
+
+msgid "Current mode: %s"
+msgstr ""
+
+msgid "Custom curve in use"
+msgstr ""
+
+msgid "Fan Mode"
+msgstr ""
+
+msgid "Curve updated in the form — click “Save & Apply” to activate it."
+msgstr ""
+
+msgid "The chart shows the curve of the current control mode; the red dot marks the live operating point. Drag the two round handles to adjust the temperature range and fan speed, then save to apply."
+msgstr ""
+
+msgid "Ramp Up Time (s)"
+msgstr ""
+
+msgid "Shortest time to go from minimum to maximum speed; 0 disables the limit."
+msgstr ""
+
+msgid "Ramp Down Time (s)"
+msgstr ""
+
+msgid "Shortest time to go from maximum to minimum speed; 0 disables the limit."
+msgstr ""
+
+msgid "Temperature sources (highest wins): "
+msgstr ""
+
+msgid "Temperature Sources"
+msgstr ""
+
+msgid "Up to 3 sources; the highest reading drives the fan."
+msgstr ""
+
+msgid "Extreme Quiet"
+msgstr ""
+
+msgid "Lowers fan speed by 15% to reduce noise, never below the calibrated start threshold."
+msgstr ""
+
+msgid "Requires a completed fan calibration first."
+msgstr ""
+
+msgid "Auto Fan Stop"
+msgstr ""
+
+msgid "Stops the fan when the target speed falls below the calibrated start threshold."
+msgstr ""
+
+msgid "Requires Extreme Quiet and a completed calibration."
+msgstr ""
+
+msgid "Fixed speed mode: drag the handle up or down to set the fan speed, then save to apply."
+msgstr ""
+
+msgid "No log lines match the filter."
+msgstr ""
+
+msgid "No FanXpert log entries yet."
+msgstr ""
+
+msgid "The daemon only logs at or above the configured level (currently %s)."
+msgstr ""
+
+msgid "%d entries"
+msgstr ""
+
+msgid "No entries"
+msgstr ""
+
+msgid "Log level: %s"
+msgstr ""
+
+msgid "Lines"
+msgstr ""
+
+msgid "Filter"
+msgstr ""
+
+msgid "Search text"
+msgstr ""
+
+msgid "Auto refresh"
+msgstr ""
+
+msgid "Refresh"
+msgstr ""
+
+msgid "Copy"
+msgstr ""
+
+msgid "FanXpert Logs"
+msgstr ""
+
+msgid "Recent daemon log entries from the system log (tag FANXPERT)."
+msgstr ""
+
+msgid "Logs"
+msgstr ""
+
+msgid "Configuration saved; the daemon reloaded it."
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+msgid "Fan curve, temperature sources and advanced fan options."
+msgstr ""
+
+msgid "Overview"
+msgstr ""
+
+msgid "%dd %dh"
+msgstr ""
+
+msgid "%dh %dm"
+msgstr ""
+
+msgid "%dm %ds"
+msgstr ""
+
+msgid "%ds"
+msgstr ""
+
+msgid "Silent"
+msgstr ""
+
+msgid "Standard"
+msgstr ""
+
+msgid "Performance"
+msgstr ""
+
+msgid "Full Speed"
+msgstr ""
+
+msgid "Fixed Speed"
+msgstr ""
+
+msgid "Empty response"
+msgstr ""
+
+msgid "Invalid JSON response"
+msgstr ""
+
+msgid "Invalid fan id"
+msgstr ""
+
+msgid "Invalid preset mode"
+msgstr ""
+
+msgid "Invalid line count"
+msgstr ""
+
+msgid "Invalid service action"
+msgstr ""
+
+msgid "Fan not found"
+msgstr ""
+
+msgid "Curve not found"
+msgstr ""
+
+msgid "No fan section found"
+msgstr ""
+
+msgid "Command exited with code %s"
+msgstr ""
+
+msgid "No calibration in progress"
+msgstr ""
+
+msgid "PWM controller not found"
+msgstr ""
+
+msgid "State file not found"
+msgstr ""
+
+msgid "Service is running. Please stop it first."
+msgstr ""
+
+msgid "Calibration started in background"
+msgstr ""
+
+msgid "Curve Type"
+msgstr ""
+
+msgid "Linear"
+msgstr ""
+
+msgid "Stepped (%d levels)"
+msgstr ""
+
+msgid "Step Levels"
+msgstr ""
+
+msgid "3 levels"
+msgstr ""
+
+msgid "4 levels"
+msgstr ""
+
+msgid "5 levels (default)"
+msgstr ""
+
+msgid "6 levels"
+msgstr ""
+
+msgid "8 levels"
+msgstr ""
+
+msgid "10 levels"
+msgstr ""
+
+msgid "12 levels"
+msgstr ""
+
+msgid "Only used by the stepped curve: the temperature range is split into this many steps."
+msgstr ""
+
+msgid "Bezier (Smooth)"
+msgstr ""
+
+msgid "Bezier/Linear/Stepped use the temperature range below; Fixed Speed ignores temperature and just holds the start speed."
 msgstr ""

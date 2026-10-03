@@ -13,9 +13,6 @@ msgstr ""
 msgid "FanXpert"
 msgstr "风扇智控"
 
-msgid "Configuration"
-msgstr "配置"
-
 msgid "Advanced fan speed control based on temperature sensors"
 msgstr "基于温度传感器的高级风扇转速控制"
 
@@ -61,26 +58,8 @@ msgstr "启用"
 msgid "Label"
 msgstr "标签"
 
-msgid "Fan Curve"
-msgstr "风扇曲线"
-
-msgid "Current Status"
-msgstr "当前状态"
-
 msgid "Control Mode"
 msgstr "控制模式"
-
-msgid "Silent"
-msgstr "静音"
-
-msgid "Standard"
-msgstr "标准"
-
-msgid "Performance"
-msgstr "高性能"
-
-msgid "Custom"
-msgstr "自定义"
 
 msgid "Preset Curves"
 msgstr "预设曲线"
@@ -100,12 +79,6 @@ msgstr "起始转速 (%)"
 msgid "Max Speed (%)"
 msgstr "最高转速 (%)"
 
-msgid "Reset to Default"
-msgstr "恢复默认"
-
-msgid "Reset"
-msgstr "重置"
-
 msgid "Custom Curve"
 msgstr "自定义曲线"
 
@@ -118,29 +91,11 @@ msgstr "添加自定义曲线"
 msgid "Name"
 msgstr "名称"
 
-msgid "Sensor"
-msgstr "传感器"
-
-msgid "CPU Temperature"
-msgstr "CPU 温度"
-
-msgid "Advanced Settings"
-msgstr "高级设置"
-
 msgid "Fan Start Threshold (%)"
 msgstr "风扇启动阈值 (%)"
 
 msgid "Minimum PWM percentage to start the fan (0-100%)"
 msgstr "启动风扇所需的最低 PWM 百分比 (0-100%)"
-
-msgid "Auto Calibration"
-msgstr "自动校准"
-
-msgid "Never Stop"
-msgstr "永不停转"
-
-msgid "Keep fan running at minimum speed instead of stopping"
-msgstr "保持风扇以最低转速运行，而不是停止"
 
 msgid "PWM Controller"
 msgstr "PWM 控制器"
@@ -148,23 +103,14 @@ msgstr "PWM 控制器"
 msgid "Auto Detect"
 msgstr "自动检测"
 
-msgid "Leave as 'auto' for automatic detection"
-msgstr "保持为“自动”以自动检测"
-
 msgid "Leave as auto for automatic detection"
 msgstr "保持为自动以自动检测"
-
-msgid "Sensor Path"
-msgstr "传感器路径"
 
 msgid "Temperature"
 msgstr "温度"
 
 msgid "Fan Speed"
 msgstr "风扇转速"
-
-msgid "Curve Mode"
-msgstr "曲线模式"
 
 msgid "Uptime"
 msgstr "运行时间"
@@ -181,41 +127,14 @@ msgstr "停止服务"
 msgid "Restart Service"
 msgstr "重启服务"
 
-msgid "Service not running"
-msgstr "服务未运行"
-
-msgid "Loading..."
-msgstr "加载中..."
-
 msgid "No RPM sensor detected, value is estimated. Please verify manually."
 msgstr "未检测到转速传感器，数值为估算值，请手动确认。"
 
 msgid "Start Calibration"
 msgstr "开始校准"
 
-msgid "Stop service before calibration"
-msgstr "校准前请先停止服务"
-
 msgid "Calibration started"
 msgstr "校准已启动"
-
-msgid "Calibrating..."
-msgstr "校准中..."
-
-msgid "Failed to start"
-msgstr "启动失败"
-
-msgid "Calibration not running"
-msgstr "校准未运行"
-
-msgid "Calibration complete"
-msgstr "校准完成"
-
-msgid "Start threshold"
-msgstr "启动阈值"
-
-msgid "Calibration failed"
-msgstr "校准失败"
 
 msgid "Measured (verified)"
 msgstr "实测（已验证）"
@@ -256,5 +175,293 @@ msgstr "请检查风扇连接或手动设置阈值。"
 msgid "Verified with RPM feedback"
 msgstr "已验证转速反馈"
 
-msgid "Stable RPM: "
-msgstr "稳定转速："
+msgid "Stable RPM: %s"
+msgstr "稳定转速：%s"
+
+msgid "Peak: %s"
+msgstr "峰值：%s"
+
+msgid "Reloads: %s"
+msgstr "配置重载：%s"
+
+msgid "Service running"
+msgstr "服务运行中"
+
+msgid "Service stopped"
+msgstr "服务已停止"
+
+msgid "Stop the service before calibration"
+msgstr "请先停止服务再校准"
+
+msgid "Loading…"
+msgstr "加载中…"
+
+msgid "Status and Control"
+msgstr "状态与控制"
+
+msgid "Control Curve"
+msgstr "控制曲线"
+
+msgid "Temperature / Fan Speed Curve"
+msgstr "温度-转速曲线"
+
+msgid "Temperature Range"
+msgstr "温度范围"
+
+msgid "Speed Range"
+msgstr "转速范围"
+
+msgid "Operating Point"
+msgstr "当前工作点"
+
+msgid "Fan Start Threshold Calibration"
+msgstr "风扇启动阈值校准"
+
+msgid "Detects the lowest PWM value that reliably starts the fan and stores it in the configuration. The service must be stopped."
+msgstr "自动测定风扇可靠启动所需的最低 PWM 值并写入配置；校准前需要先停止服务。"
+
+msgid "No RPM data (no sensor, or not sampled yet)"
+msgstr "暂无转速数据（无转速传感器，或尚未采集到样本）"
+
+msgid "Power"
+msgstr "功率"
+
+msgid "Minimum RPM"
+msgstr "最低转速"
+
+msgid "Power → Minimum RPM"
+msgstr "功率 → 最低转速"
+
+msgid "Lowest RPM observed per power step since the service started."
+msgstr "服务启动以来，各功率档位观测到的最低转速。"
+
+msgid "Mode applied: %s"
+msgstr "已套用模式：%s"
+
+msgid "Current mode: %s"
+msgstr "当前模式：%s"
+
+msgid "Custom curve in use"
+msgstr "正在使用自定义曲线"
+
+msgid "Fan Mode"
+msgstr "风扇模式"
+
+msgid "Curve updated in the form — click “Save & Apply” to activate it."
+msgstr "曲线已更新到表单，点击「保存并应用」后生效。"
+
+msgid "The chart shows the curve of the current control mode; the red dot marks the live operating point. Drag the two round handles to adjust the temperature range and fan speed, then save to apply."
+msgstr "图表显示当前控制模式的曲线，红点为实时工作点；拖动两端圆点可调整温度区间与转速，保存后生效。"
+
+msgid "Ramp Up Time (s)"
+msgstr "升速时间（秒）"
+
+msgid "Shortest time to go from minimum to maximum speed; 0 disables the limit."
+msgstr "从最低转速升到最高转速所需的最短秒数；0 表示不限制。"
+
+msgid "Ramp Down Time (s)"
+msgstr "降速时间（秒）"
+
+msgid "Shortest time to go from maximum to minimum speed; 0 disables the limit."
+msgstr "从最高转速降到最低转速所需的最短秒数；0 表示不限制。"
+
+msgid "Temperature sources (highest wins): "
+msgstr "测温点（取最高）："
+
+msgid "Temperature Sources"
+msgstr "测温点"
+
+msgid "Up to 3 sources; the highest reading drives the fan."
+msgstr "最多选 3 个测温点，取其中最高温参与调速。"
+
+msgid "Extreme Quiet"
+msgstr "极致静音"
+
+msgid "Lowers fan speed by 15% to reduce noise, never below the calibrated start threshold."
+msgstr "在曲线基础上下调 15% 转速以降噪，且不会低于校准得到的最低可用转速。"
+
+msgid "Requires a completed fan calibration first."
+msgstr "需要先完成风扇校准。"
+
+msgid "Auto Fan Stop"
+msgstr "自动停转"
+
+msgid "Stops the fan when the target speed falls below the calibrated start threshold."
+msgstr "当目标转速低于校准得到的最低可用转速时让风扇停转。"
+
+msgid "Requires Extreme Quiet and a completed calibration."
+msgstr "需要先开启极致静音并完成校准。"
+
+msgid "Fixed speed mode: drag the handle up or down to set the fan speed, then save to apply."
+msgstr "固定转速模式：上下拖动圆点即可设定风扇转速，保存后生效。"
+
+msgid "No log lines match the filter."
+msgstr "没有符合过滤条件的日志。"
+
+msgid "No FanXpert log entries yet."
+msgstr "还没有 FanXpert 日志。"
+
+msgid "The daemon only logs at or above the configured level (currently %s)."
+msgstr "守护进程只记录不低于当前日志级别（%s）的事件。"
+
+msgid "%d entries"
+msgstr "%d 条"
+
+msgid "No entries"
+msgstr "暂无日志"
+
+msgid "Log level: %s"
+msgstr "日志级别：%s"
+
+msgid "Lines"
+msgstr "行数"
+
+msgid "Filter"
+msgstr "过滤"
+
+msgid "Search text"
+msgstr "搜索内容"
+
+msgid "Auto refresh"
+msgstr "自动刷新"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "Copy"
+msgstr "复制"
+
+msgid "FanXpert Logs"
+msgstr "FanXpert 日志"
+
+msgid "Recent daemon log entries from the system log (tag FANXPERT)."
+msgstr "来自系统日志的守护进程日志（tag FANXPERT）。"
+
+msgid "Logs"
+msgstr "日志"
+
+msgid "Configuration saved; the daemon reloaded it."
+msgstr "配置已保存，守护进程已重新加载。"
+
+msgid "Configuration"
+msgstr "配置"
+
+msgid "Fan curve, temperature sources and advanced fan options."
+msgstr "风扇曲线、测温点与高级选项。"
+
+msgid "Overview"
+msgstr "概览"
+
+msgid "%dd %dh"
+msgstr "%d 天 %d 小时"
+
+msgid "%dh %dm"
+msgstr "%d 小时 %d 分"
+
+msgid "%dm %ds"
+msgstr "%d 分 %d 秒"
+
+msgid "%ds"
+msgstr "%d 秒"
+
+msgid "Silent"
+msgstr "静音"
+
+msgid "Standard"
+msgstr "标准"
+
+msgid "Performance"
+msgstr "高性能"
+
+msgid "Full Speed"
+msgstr "全速"
+
+msgid "Fixed Speed"
+msgstr "固定转速"
+
+msgid "Empty response"
+msgstr "无响应内容"
+
+msgid "Invalid JSON response"
+msgstr "JSON 响应无效"
+
+msgid "Invalid fan id"
+msgstr "风扇 ID 无效"
+
+msgid "Invalid preset mode"
+msgstr "预设模式无效"
+
+msgid "Invalid line count"
+msgstr "行数无效"
+
+msgid "Invalid service action"
+msgstr "服务操作无效"
+
+msgid "Fan not found"
+msgstr "未找到风扇"
+
+msgid "Curve not found"
+msgstr "未找到曲线"
+
+msgid "No fan section found"
+msgstr "未找到风扇配置段"
+
+msgid "Command exited with code %s"
+msgstr "命令退出码 %s"
+
+msgid "No calibration in progress"
+msgstr "当前没有进行中的校准"
+
+msgid "PWM controller not found"
+msgstr "未找到 PWM 控制器"
+
+msgid "State file not found"
+msgstr "未找到状态文件"
+
+msgid "Service is running. Please stop it first."
+msgstr "服务正在运行，请先停止服务再校准。"
+
+msgid "Calibration started in background"
+msgstr "校准已在后台开始"
+
+msgid "Curve Type"
+msgstr "曲线类型"
+
+msgid "Linear"
+msgstr "线性"
+
+msgid "Stepped (%d levels)"
+msgstr "阶梯（%d 档）"
+
+msgid "Step Levels"
+msgstr "阶梯档数"
+
+msgid "3 levels"
+msgstr "3 档"
+
+msgid "4 levels"
+msgstr "4 档"
+
+msgid "5 levels (default)"
+msgstr "5 档（默认）"
+
+msgid "6 levels"
+msgstr "6 档"
+
+msgid "8 levels"
+msgstr "8 档"
+
+msgid "10 levels"
+msgstr "10 档"
+
+msgid "12 levels"
+msgstr "12 档"
+
+msgid "Only used by the stepped curve: the temperature range is split into this many steps."
+msgstr "仅阶梯曲线使用：温度区间被等分成这么多档。"
+
+msgid "Bezier (Smooth)"
+msgstr "贝塞尔（平滑）"
+
+msgid "Bezier/Linear/Stepped use the temperature range below; Fixed Speed ignores temperature and just holds the start speed."
+msgstr "贝塞尔 / 线性 / 阶梯使用下方的温度区间；固定转速忽略温度，只保持起始转速。"
