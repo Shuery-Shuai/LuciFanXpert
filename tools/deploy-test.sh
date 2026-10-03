@@ -4,7 +4,7 @@ set -eu
 
 unset CDPATH
 
-ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"   # 脚本位于 tools/ 下，仓库根在上一层
 LOG_LINES="${LOG_LINES:-120}"
 SSH_BIN="${SSH_BIN:-ssh}"
 DEPLOY_DEBUG="${DEPLOY_DEBUG:-}"
@@ -165,6 +165,7 @@ EOF
 copy_tree() {
     src="$1"
     dst="$2"
+    exclude="${3:-}"
 
     [ -d "$src" ] || die "missing source directory: $src"
     case "$dst" in
@@ -178,8 +179,14 @@ copy_tree() {
     tar_file="$(mktemp "${TMPDIR:-/tmp}/fanxpert-deploy.XXXXXX")" || die "failed to create temporary tar file"
     TMP_FILES="$TMP_FILES $tar_file"
 
-    (cd "$src" && COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' -cf "$tar_file" .) ||
-        die "failed to archive $src"
+    (
+        cd "$src" || exit 1
+        if [ -n "$exclude" ]; then
+            COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' --exclude="$exclude" -cf "$tar_file" .
+        else
+            COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' -cf "$tar_file" .
+        fi
+    ) || die "failed to archive $src"
 
     run_remote "mkdir -p '$dst' && tar -C '$dst' -xf -" < "$tar_file" ||
         die "failed to copy $src to $TARGET:$dst"
@@ -198,6 +205,37 @@ rm -f /usr/lib/lua/luci/model/cbi/fanxpert.lua 2>/dev/null || true
 rm -rf /usr/lib/lua/luci/view/fanxpert 2>/dev/null || true
 rm -f /www/luci-static/resources/fanxpert/curve.js 2>/dev/null || true
 EOF
+}
+
+# LuCI 的资源版本号 = luci 包版本 + 包数据库的 mtime（见 runtime.uc 的 pkgs_update_time）。
+# 只复制前端文件不会改变它，浏览器会一直复用旧的 JS/CSS；碰一下包数据库即可让所有
+# 客户端重新拉取资源，省掉“部署完还要手动强制刷新”。
+bust_luci_cache() {
+    run_remote "[ -e /lib/apk/db/installed ] && touch /lib/apk/db/installed || { [ -e /usr/lib/opkg/status ] && touch /usr/lib/opkg/status; }" ||
+        warn "failed to bump resource version; browsers may keep cached assets"
+
+    run_remote "rm -rf /tmp/luci-indexcache.* 2>/dev/null; true" >/dev/null 2>&1 || true
+
+    ok "resource version bumped (browsers will re-fetch LuCI assets on next load)"
+}
+
+# 把 po/ 编译成 LuCI 的 .lmo 并安装到路由器（LuCI 只读 .lmo，不读 GNU .mo）
+install_translations() {
+    po_file="$ROOT_DIR/luci-app-fanxpert/po/zh_Hans/fanxpert.po"
+    lmo_tmp="$(mktemp "${TMPDIR:-/tmp}/fanxpert-lmo.XXXXXX")" || die "failed to create temporary lmo file"
+    TMP_FILES="$TMP_FILES $lmo_tmp"
+
+    [ -f "$po_file" ] || die "missing translation source: $po_file"
+    command -v python3 >/dev/null 2>&1 || die "python3 is required to build translations"
+
+    python3 "$ROOT_DIR/tools/po2lmo.py" "$po_file" "$lmo_tmp" || die "failed to compile $po_file"
+
+    log "zh_Hans → fanxpert.zh-cn.lmo ($(wc -c < "$lmo_tmp" | tr -d ' ') bytes)"
+
+    run_remote "mkdir -p /usr/lib/lua/luci/i18n && cat > /usr/lib/lua/luci/i18n/fanxpert.zh-cn.lmo && chmod 644 /usr/lib/lua/luci/i18n/fanxpert.zh-cn.lmo" < "$lmo_tmp" ||
+        die "failed to install translations"
+
+    ok "translations installed"
 }
 
 restart_remote_services() {
@@ -219,6 +257,12 @@ for file in /etc/init.d/fanxpert /usr/sbin/fanxpert.sh /etc/config/fanxpert /etc
 done
 [ -d /www/luci-static/resources/fanxpert ] && chown -R root:root /www/luci-static/resources/fanxpert 2>/dev/null || true
 [ -f /www/luci-static/resources/view/fanxpert.js ] && chown root:root /www/luci-static/resources/view/fanxpert.js 2>/dev/null || true
+[ -d /www/luci-static/resources/view/fanxpert ] && chown -R root:root /www/luci-static/resources/view/fanxpert 2>/dev/null || true
+
+echo "[config] initializing default configuration if missing"
+if [ ! -f /etc/config/fanxpert ] && [ -f /etc/uci-defaults/80_fanxpert ]; then
+    sh /etc/uci-defaults/80_fanxpert || true
+fi
 
 echo "[rpcd] restarting RPC daemon"
 if [ -x /etc/init.d/rpcd ]; then
@@ -246,6 +290,9 @@ if [ -f /etc/init.d/fanxpert ]; then
         /etc/init.d/fanxpert restart
     else
         echo "[fanxpert] service is disabled, skipped restart"
+        if /etc/init.d/fanxpert status >/dev/null 2>&1; then
+            echo "[fanxpert] WARNING: 服务正在运行但没有开机自启，重启后将失去风扇控制"
+        fi
         echo "[fanxpert] to enable: /etc/init.d/fanxpert enable && /etc/init.d/fanxpert start"
     fi
 else
@@ -334,12 +381,37 @@ check_remote_prerequisites || die "remote shell, tar, or uci command not availab
 ok "remote prerequisites available"
 
 step "Copying root filesystem files (config, init, scripts)"
- copy_tree "$ROOT_DIR/luci-app-fanxpert/root" "/"
+log "existing /etc/config/fanxpert is preserved"
+copy_tree "$ROOT_DIR/luci-app-fanxpert/root" "/" "./etc/config/fanxpert"
 
+
+step "Installing translations"
+install_translations
 
 step "Copying LuCI static files (JavaScript, CSS)"
 copy_tree "$ROOT_DIR/luci-app-fanxpert/htdocs" "/www"
 ok "LuCI static files copied"
+
+step "Bumping LuCI resource version"
+bust_luci_cache
+
+step "Installing browser self-check page"
+# 排查前端加载问题用：用真实 luci.js 加载器验证三个视图
+if [ -f "$ROOT_DIR/tools/fanxpert-diag.html" ]; then
+    if run_remote "cat > /www/luci-static/resources/fanxpert-diag.html" < "$ROOT_DIR/tools/fanxpert-diag.html"; then
+        ok "self-check page installed"
+    else
+        warn "failed to install self-check page"
+    fi
+else
+    log "tools/fanxpert-diag.html not found, skipped"
+fi
+
+step "Removing files that moved or were deleted upstream"
+# 前端结构调整后（common.js 内联进 view/fanxpert/*.js）旧文件必须清掉，
+# 否则旧模块仍可被 require 到，行为会和新代码混杂。
+run_remote "rm -f /www/luci-static/resources/view/fanxpert.js /www/luci-static/resources/fanxpert/common.js 2>/dev/null; true" >/dev/null 2>&1 || true
+ok "stale frontend files removed"
 
 step "Removing stale debug files"
 cleanup_remote_files
@@ -365,6 +437,7 @@ step "Deploy complete"
 ok "all deploy steps finished"
 printf '\n%s[NEXT STEPS]%s\n' "$C_BOLD" "$C_RESET"
 log "1. Access LuCI: http://$OPENWRT_HOST → System → FanXpert"
+log "LuCI 资源版本号已更新，普通刷新（F5）即可加载新前端；若仍是旧界面再强制刷新（Cmd/Ctrl+Shift+R）"
 log "2. Enable service: uci set fanxpert.settings.enabled='1' && uci commit"
 log "3. Start service: /etc/init.d/fanxpert enable && /etc/init.d/fanxpert start"
 log "4. View logs: logread -f | grep FANXPERT"

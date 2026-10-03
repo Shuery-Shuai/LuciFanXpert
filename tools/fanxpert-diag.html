@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FanXpert 前端自检</title>
+<style>
+body{font:14px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:20px;max-width:960px;color:#222}
+h1{font-size:19px}h2{font-size:15px;margin-top:22px}
+pre{background:#f6f7f9;border:1px solid #e3e6ea;border-radius:8px;padding:12px;white-space:pre-wrap;word-break:break-all}
+.ok{color:#137333;font-weight:600}.bad{color:#c5221f;font-weight:600}
+</style>
+</head>
+<body>
+<h1>FanXpert 前端自检</h1>
+<p>本页从<strong>你当前这台浏览器</strong>出发，检查三件事：资源版本号、模块文件内容、LuCI 加载器能否真正加载模块。
+   出现 <code>factory yields invalid constructor</code> 时，用它就能区分是<b>缓存</b>、<b>文件内容</b>还是<b>加载器契约</b>的问题。</p>
+<pre id="out">检查中…</pre>
+
+<script>
+const out = document.getElementById('out');
+const lines = [];
+function log(s) { lines.push(s); out.textContent = lines.join('\n'); }
+function ok(s) { log('✅ ' + s); }
+function bad(s) { log('❌ ' + s); }
+
+/* 1) 资源版本号：LuCI 会把它拼在资源 URL 后面 */
+function resourceVersion() {
+	const s = Array.from(document.scripts).map(function (x) { return x.src || ''; })
+		.filter(function (u) { return /\/luci\.js/.test(u); })[0];
+	if (!s) return null;
+	const m = /\/luci\.js(?:\?v=(.+))?$/.exec(s);
+	return m ? m[1] : null;
+}
+
+async function main() {
+	log('页面: ' + location.href);
+
+	const ver = resourceVersion();
+	log('页面里的 luci.js 资源版本: ' + (ver || '(未找到 luci.js，说明这不是 LuCI 页面)'));
+	log('');
+
+	/* 2) 抓模块文件：对比“页面版本号 URL”与“全新 URL”，并检查 require 顺序 */
+	const base = location.origin + '/luci-static/resources';
+	const rel = 'view/fanxpert/overview.js';
+	const ver = resourceVersion();
+	const viaPage = base + '/' + rel + (ver ? '?v=' + ver : '');
+	const fresh = base + '/' + rel + '?fresh=' + Date.now();
+
+	async function grab(url) {
+		const res = await fetch(url, { cache: 'no-store' });
+		const text = await res.text();
+		const lines = text.split('\n');
+		const blockAt = lines.findIndex(function (l) { return l.indexOf('==== BEGIN FanXpert 公共块') >= 0; });
+		const lastReq = lines.reduce(function (acc, l, i) {
+			return /^'require [^']+';$/.test(l.trim()) ? i : acc;
+		}, -1);
+		const loadAt = lines.findIndex(function (l) { return l.indexOf('load: function') >= 0; });
+
+		return { status: res.status, size: text.length, blockAt: blockAt + 1, lastReq: lastReq + 1, loadAt: loadAt + 1,
+			order_ok: blockAt > lastReq };
+	}
+
+	let a = null, b = null;
+
+	try { a = await grab(viaPage); } catch (e) { bad('抓取（带版本号）失败: ' + e.message); }
+	try { b = await grab(fresh); } catch (e) { bad('抓取（全新 URL）失败: ' + e.message); }
+
+	if (a) log('带版本号 URL: HTTP ' + a.status + ' | ' + a.size + ' B | 公共块第 ' + a.blockAt + ' 行 / 最后 require 第 ' + a.lastReq + ' 行 / load() 第 ' + a.loadAt + ' 行 | 顺序' + (a.order_ok ? '正常' : '❌错'));
+	if (b) log('全新 URL:     HTTP ' + b.status + ' | ' + b.size + ' B | 公共块第 ' + b.blockAt + ' 行 / 最后 require 第 ' + b.lastReq + ' 行 / load() 第 ' + b.loadAt + ' 行 | 顺序' + (b.order_ok ? '正常' : '❌错'));
+
+	if (a && b && (a.size !== b.size || a.loadAt !== b.loadAt))
+		bad('两个 URL 内容不同 ⇒ 你浏览器手上是**旧版本**（缓存），这就是刷新无效的原因');
+	else if (a && b)
+		ok('两个 URL 内容一致 ⇒ 文件本身没问题，问题在加载器/依赖注入');
+
+	log('');
+	log('—— 以下用真实 LuCI 加载器加载（需要能取到 luci.js / cbi.js） ——');
+
+	function load(src) {
+		return new Promise(function (resolve, reject) {
+			const el = document.createElement('script');
+			el.src = src;
+			el.onload = resolve;
+			el.onerror = function () { reject(new Error('无法加载 ' + src)); };
+			document.head.appendChild(el);
+		});
+	}
+
+	try {
+		await load(base + '/cbi.js?v=' + (ver || 'diag'));
+		await load(base + '/luci.js?v=' + (ver || 'diag'));
+	} catch (e) { bad(String(e.message)); return; }
+
+	try {
+		const L = new LuCI({ base_url: base, resource_version: ver || 'diag', scriptname: '/cgi-bin/luci', sessionid: null });
+		window.L = L;
+		ok('luci.js 已就绪');
+
+		for (const name of ['fanxpert.common', 'view/fanxpert', 'view/fanxpert/config', 'view/fanxpert/logs']) {
+			try {
+				const mod = await L.require(name);
+				ok(name + ' → ' + typeof mod + (typeof mod.render === 'function' ? '（render 可用）' : ''));
+
+				try {
+					await mod.load();
+					ok('   load() 通过（依赖注入正常）');
+				} catch (e) {
+					const kind = (e && e.constructor && e.constructor.name) || typeof e;
+					const msg = e && e.message ? e.message : String(e);
+
+					if (kind === 'ReferenceError' || /Can't find variable|is not defined/.test(msg))
+						bad('   load() 抛 ' + kind + ': ' + msg + ' —— 依赖没被注入（模块文件是旧版或加载器差异）');
+					else
+						log('   load() 抛 ' + kind + ': ' + msg + '（无会话时 RPC 失败属正常）');
+				}
+			} catch (e) {
+				bad(name + ' → ' + (e && e.message ? e.message : String(e)));
+			}
+		}
+	} catch (e) {
+		bad('初始化 LuCI 失败: ' + (e && e.message ? e.message : String(e)));
+	}
+
+	log('');
+	log('提示：LuCI 是单页应用，某个模块一旦加载失败，本次页面会话里会一直复现（点菜单切换也一样）。');
+	log('所以修好后必须整页刷新（F5 / Cmd+R）；若仍失败，再看上面的模块文件那一行是否为“旧版”。');
+}
+
+main();
+</script>
+</body>
+</html>

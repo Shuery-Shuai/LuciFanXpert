@@ -138,6 +138,10 @@ load_uci_config() {
 ensure_uci_config() {
     local need_commit=0
 
+    # 0. 配置文件缺失时 uci set/commit 会报 "Entry not found" 且不写入任何内容，
+    #    因此先把空配置文件建出来，让后续的自愈逻辑真正生效。
+    [ -f /etc/config/fanxpert ] || touch /etc/config/fanxpert
+
     # 1. 检查全局 settings section
     if ! uci -q get fanxpert.settings >/dev/null 2>&1; then
         log_msg notice "UCI 配置缺失，正在创建默认配置..."
